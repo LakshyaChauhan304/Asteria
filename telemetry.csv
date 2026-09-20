@@ -1,0 +1,15 @@
+event_id,timestamp,agent_id,tool,action,resource,result
+EVT001,2026-09-21 10:00:01,agent_01,documents,read,public_doc,success
+EVT002,2026-09-21 10:01:15,agent_01,documents,read,project_doc,success
+EVT003,2026-09-21 10:02:10,agent_01,github,read,repo_01,success
+EVT004,2026-09-21 10:03:05,agent_01,database,query,customer_db,success
+EVT005,2026-09-21 10:03:30,agent_01,database,query,customer_db,denied
+EVT006,2026-09-21 10:03:45,agent_01,database,query,customer_db,denied
+EVT007,2026-09-21 10:04:02,agent_01,database,query,admin_db,denied
+EVT008,2026-09-21 10:04:30,agent_01,email,send,external,success
+EVT009,2026-09-21 10:10:20,agent_02,documents,read,public_doc,success
+EVT010,2026-09-21 10:12:10,agent_02,documents,read,project_doc,success
+EVT011,2026-09-21 10:15:00,agent_02,github,read,repo_02,success
+EVT012,2026-09-21 10:20:00,agent_03,documents,read,public_doc,success
+EVT013,2026-09-21 10:22:00,agent_03,documents,read,public_doc,success
+EVT014,2026-09-21 10:25:00,agent_03,documents,read,project_doc,success
