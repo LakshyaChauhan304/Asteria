@@ -1,3 +1,6 @@
+
+from pathlib import Path
+
 import pandas as pd
 
 from sklearn.linear_model import LogisticRegression
@@ -6,8 +9,11 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     f1_score,
-    confusion_matrix
+    confusion_matrix,
+    classification_report
 )
+
+from xgboost import XGBClassifier
 
 from preprocessing import (
     load_dataset,
@@ -21,40 +27,30 @@ ISOLATION_CONTAMINATION = 0.30
 
 
 def evaluate_model(y_true, y_pred):
-    """
-    Calculate common classification metrics.
-    """
 
     precision = precision_score(
-        y_true,
-        y_pred,
-        zero_division=0
+        y_true, y_pred, zero_division=0
     )
 
     recall = recall_score(
-        y_true,
-        y_pred,
-        zero_division=0
+        y_true, y_pred, zero_division=0
     )
 
     f1 = f1_score(
-        y_true,
-        y_pred,
-        zero_division=0
+        y_true, y_pred, zero_division=0
     )
 
     tn, fp, fn, tp = confusion_matrix(
-        y_true,
-        y_pred
+        y_true, y_pred
     ).ravel()
 
-    false_positive_rate = fp / (fp + tn)
+    fpr = fp / (fp + tn)
 
     return {
         "Precision": precision,
         "Recall": recall,
         "F1": f1,
-        "FPR": false_positive_rate,
+        "FPR": fpr,
         "TN": tn,
         "FP": fp,
         "FN": fn,
@@ -62,93 +58,25 @@ def evaluate_model(y_true, y_pred):
     }
 
 
-def train_logistic_regression(
-    X_train_processed,
-    y_train
-):
-    """
-    Train supervised Logistic Regression.
-    """
-
-    print("\n[+] Training Logistic Regression...")
-
-    model = LogisticRegression(
-        max_iter=1000,
-        random_state=42
-    )
-
-    model.fit(
-        X_train_processed,
-        y_train
-    )
-
-    print("[+] Logistic Regression completed.")
-
-    return model
-
-
-def train_isolation_forest(
-    X_train_processed
-):
-    """
-    Train unsupervised Isolation Forest.
-    """
-
-    print(
-        f"\n[+] Training Isolation Forest "
-        f"(contamination={ISOLATION_CONTAMINATION})..."
-    )
-
-    model = IsolationForest(
-        n_estimators=200,
-        contamination=ISOLATION_CONTAMINATION,
-        random_state=42,
-        n_jobs=-1
-    )
-
-    model.fit(
-        X_train_processed
-    )
-
-    print("[+] Isolation Forest completed.")
-
-    return model
-
-
 def main():
 
     print("=" * 60)
-    print("ASTERIA - MODEL COMPARISON")
+    print("ASTERIA - THREE MODEL COMPARISON")
     print("=" * 60)
 
-    # --------------------------------------------------
     # 1. Load dataset
-    # --------------------------------------------------
-
     df = load_dataset()
 
-    # --------------------------------------------------
     # 2. Prepare features
-    # --------------------------------------------------
-
     X, y = prepare_features(df)
 
-    # --------------------------------------------------
-    # 3. Same train/validation split for both models
-    # --------------------------------------------------
-
+    # 3. Split data
     X_train, X_val, y_train, y_val = split_data(
-        X,
-        y
+        X, y
     )
 
-    # --------------------------------------------------
-    # 4. Same preprocessing for both models
-    # --------------------------------------------------
-
-    preprocessor = create_preprocessor(
-        X_train
-    )
+    # 4. Preprocessing
+    preprocessor = create_preprocessor(X_train)
 
     X_train_processed = preprocessor.fit_transform(
         X_train
@@ -160,71 +88,126 @@ def main():
 
     print("\n[+] Preprocessing completed.")
 
+    results = []
+
     # ==================================================
-    # 5. LOGISTIC REGRESSION
+    # MODEL 1: LOGISTIC REGRESSION
     # ==================================================
 
-    logistic_model = train_logistic_regression(
+    print("\n[+] Training Logistic Regression...")
+
+    logistic_model = LogisticRegression(
+        max_iter=1000,
+        random_state=42
+    )
+
+    logistic_model.fit(
         X_train_processed,
         y_train
     )
 
-    logistic_predictions = logistic_model.predict(
+    logistic_pred = logistic_model.predict(
         X_val_processed
     )
 
     logistic_metrics = evaluate_model(
-        y_val,
-        logistic_predictions
+        y_val, logistic_pred
     )
 
-    logistic_metrics["Model"] = (
-        "Logistic Regression"
-    )
+    logistic_metrics["Model"] = "Logistic Regression"
+
+    results.append(logistic_metrics)
 
     # ==================================================
-    # 6. ISOLATION FOREST
+    # MODEL 2: ISOLATION FOREST
     # ==================================================
 
-    isolation_model = train_isolation_forest(
-        X_train_processed
+    print("\n[+] Training Isolation Forest...")
+
+    isolation_model = IsolationForest(
+        n_estimators=200,
+        contamination=ISOLATION_CONTAMINATION,
+        random_state=42,
+        n_jobs=-1
     )
 
-    isolation_raw_predictions = (
-        isolation_model.predict(
-            X_val_processed
-        )
+    isolation_model.fit(X_train_processed)
+
+    isolation_raw = isolation_model.predict(
+        X_val_processed
     )
 
-    # Isolation Forest:
-    #     1  = normal
-    #    -1  = anomaly
-    #
-    # Convert to Asteria convention:
-    #     0  = normal
-    #     1  = attack/anomaly
-
-    isolation_predictions = (
-        isolation_raw_predictions == -1
+    isolation_pred = (
+        isolation_raw == -1
     ).astype(int)
 
     isolation_metrics = evaluate_model(
-        y_val,
-        isolation_predictions
+        y_val, isolation_pred
     )
 
-    isolation_metrics["Model"] = (
-        "Isolation Forest"
+    isolation_metrics["Model"] = "Isolation Forest"
+
+    results.append(isolation_metrics)
+
+    # ==================================================
+    # MODEL 3: XGBOOST
+    # ==================================================
+
+    print("\n[+] Training XGBoost...")
+
+    xgb_model = XGBClassifier(
+        objective="binary:logistic",
+        n_estimators=300,
+        max_depth=6,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_lambda=1,
+        eval_metric="logloss",
+        tree_method="hist",
+        random_state=42,
+        n_jobs=-1
     )
 
-    # --------------------------------------------------
-    # 7. Comparison table
-    # --------------------------------------------------
+    xgb_model.fit(
+        X_train_processed,
+        y_train
+    )
 
-    results = [
-        logistic_metrics,
-        isolation_metrics
-    ]
+    print("[+] XGBoost training completed.")
+
+    xgb_pred = xgb_model.predict(
+        X_val_processed
+    )
+
+    xgb_metrics = evaluate_model(
+        y_val, xgb_pred
+    )
+
+    xgb_metrics["Model"] = "XGBoost"
+
+    results.append(xgb_metrics)
+
+    # ==================================================
+    # XGBOOST CLASSIFICATION REPORT
+    # ==================================================
+
+    print("\n" + "=" * 60)
+    print("XGBOOST CLASSIFICATION REPORT")
+    print("=" * 60)
+
+    print(
+        classification_report(
+            y_val,
+            xgb_pred,
+            target_names=["Normal", "Attack"],
+            zero_division=0
+        )
+    )
+
+    # ==================================================
+    # MODEL COMPARISON
+    # ==================================================
 
     results_df = pd.DataFrame(results)
 
@@ -243,27 +226,38 @@ def main():
     ]
 
     print("\n" + "=" * 60)
-    print("MODEL COMPARISON")
+    print("FINAL MODEL COMPARISON")
     print("=" * 60)
 
     print(
-        results_df.to_string(
-            index=False
-        )
+        results_df.to_string(index=False)
     )
 
-    # --------------------------------------------------
-    # 8. Save comparison
-    # --------------------------------------------------
+    # ==================================================
+    # SAVE RESULTS AND MODEL
+    # ==================================================
+
+    Path("experiments").mkdir(exist_ok=True)
+    Path("models").mkdir(exist_ok=True)
 
     results_df.to_csv(
-        "experiments/model_comparison.csv",
+        "experiments/three_model_comparison.csv",
         index=False
     )
 
+    xgb_model.save_model(
+        "models/xgboost_model.json"
+    )
+
+    print("\n[+] Comparison saved.")
+    print("[+] XGBoost model saved.")
+
     print(
-        "\n[+] Results saved to "
-        "experiments/model_comparison.csv"
+        "\nResults: experiments/three_model_comparison.csv"
+    )
+
+    print(
+        "Model: models/xgboost_model.json"
     )
 
 

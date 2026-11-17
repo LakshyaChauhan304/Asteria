@@ -49,57 +49,43 @@ def prepare_features(df):
     return X,y
 
 
+
 def create_preprocessor(X):
 
+    # Only select categorical features that exist in X
     categorical_features = [
-        "proto",
-        "service",
-        "state"
+        column for column in [
+            "proto",
+            "service",
+            "state",
+            "proto_state"
+        ]
+        if column in X.columns
     ]
 
+    # All remaining features are numerical
     numerical_features = [
-        column 
-        for column in X.columns
+        column for column in X.columns
         if column not in categorical_features
     ]
 
-    numerical_pipeline = Pipeline(
-        steps=[
-            ("imputer",
-             SimpleImputer(strategy="median")
-            ),
-            (
-                "scaler",
-                StandardScaler()
-            )
-        ]
-    )
+    numerical_pipeline = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler())
+    ])
 
-    categorical_pipeline = Pipeline(
-        steps=[
-            ("imputer",
-             SimpleImputer(strategy="most_frequent")
-            ),
-            (
-                "encoder",
-                OneHotEncoder(
-                    handle_unknown="ignore"
-                )
-            )
-        ]
-    )
+    categorical_pipeline = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        ("encoder", OneHotEncoder(handle_unknown="ignore"))
+    ])
 
-    preprocessor = ColumnTransformer(
-        transformers=[
-            (
-                "numerical",
-                numerical_pipeline,
-                numerical_features
-            )
-        ]
-    )
+    preprocessor = ColumnTransformer(transformers=[
+        ("numerical", numerical_pipeline, numerical_features),
+        ("categorical", categorical_pipeline, categorical_features)
+    ])
 
     return preprocessor
+
 
 
 def split_data(X,y):
