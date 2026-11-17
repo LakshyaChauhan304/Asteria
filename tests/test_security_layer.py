@@ -15,6 +15,8 @@ from security_layer import (
     CapabilityRule,
     DecisionState,
     DetectionEvidenceV1,
+    DetectionReviewTrigger,
+    SecurityDecision,
     review_trigger_from_evidence,
 )
 
@@ -150,6 +152,25 @@ class PolicyBoundaryTests(unittest.TestCase):
                 resource="public/",
             )
 
+    def test_malformed_identity_and_resource_are_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            CapabilityRequest(
+                agent_id="finance-agent",
+                identity="finance service",
+                tool="read_documents",
+                action=CapabilityAction.READ,
+                resource="public/",
+            )
+
+        with self.assertRaises(ValueError):
+            CapabilityRequest(
+                agent_id="finance-agent",
+                identity="finance-service",
+                tool="read_documents",
+                action=CapabilityAction.READ,
+                resource="public folder",
+            )
+
     def test_malformed_rule_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             CapabilityRule(
@@ -220,6 +241,43 @@ class PolicyBoundaryTests(unittest.TestCase):
     def test_policy_rejects_non_request_objects(self) -> None:
         with self.assertRaises(TypeError):
             self.policy.evaluate({"agent_id": "finance-agent"})
+
+
+class DirectConstructionTests(unittest.TestCase):
+    """Security values must be valid even when not policy-generated."""
+
+    def setUp(self) -> None:
+        self.request = CapabilityRequest(
+            agent_id="finance-agent",
+            identity="finance-service",
+            tool="read_documents",
+            action=CapabilityAction.READ,
+            resource="public/",
+        )
+
+    def test_security_decision_rejects_invalid_fields_and_states(self) -> None:
+        with self.assertRaises(TypeError):
+            SecurityDecision(self.request, "allowed", "explicit_grant", 1)
+        with self.assertRaises(ValueError):
+            SecurityDecision(self.request, DecisionState.BLOCKED, "blocked", 1)
+        with self.assertRaises(ValueError):
+            SecurityDecision(self.request, DecisionState.ALLOWED, "granted", 0)
+        with self.assertRaises(ValueError):
+            SecurityDecision(self.request, DecisionState.ALLOWED, "bad reason", 1)
+        with self.assertRaises(ValueError):
+            SecurityDecision(self.request, DecisionState.ALLOWED, "granted", -1)
+
+    def test_detection_review_trigger_rejects_invalid_direct_construction(self) -> None:
+        with self.assertRaises(ValueError):
+            DetectionReviewTrigger("", True, ("model_flag",), "asteria.v1")
+        with self.assertRaises(TypeError):
+            DetectionReviewTrigger("evt-001", "true", ("model_flag",), "asteria.v1")
+        with self.assertRaises(ValueError):
+            DetectionReviewTrigger("evt-001", True, (), "asteria.v1")
+        with self.assertRaises(ValueError):
+            DetectionReviewTrigger("evt-001", False, ("model_flag",), "asteria.v1")
+        with self.assertRaises(TypeError):
+            DetectionReviewTrigger("evt-001", True, ["model_flag"], "asteria.v1")
 
 
 if __name__ == "__main__":

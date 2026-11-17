@@ -17,6 +17,7 @@ from investigator import (
     HypothesisStatus,
     InformationRequestStatus,
     InvestigationObservation,
+    InvestigationRecord,
     InvestigationStatus,
     Investigator,
     ObservationClass,
@@ -29,6 +30,7 @@ from security_layer import (
     CapabilityRule,
     DecisionState,
     DetectionEvidenceV1,
+    SecurityDecision,
 )
 
 
@@ -239,6 +241,17 @@ class StatefulInvestigatorTests(unittest.TestCase):
             resource=self.context.resource,
         )
 
+    def assert_state_unchanged(
+        self,
+        record: InvestigationRecord,
+        error_type: type[Exception],
+        operation: object,
+    ) -> None:
+        before = record.to_dict()
+        with self.assertRaises(error_type):
+            operation()
+        self.assertEqual(record.to_dict(), before)
+
     def test_start_creates_stateful_record_with_competing_hypotheses(self) -> None:
         record = Investigator(CapabilityPolicy(rules=(self.rule,))).start_investigation(
             make_evidence(), self.context, investigation_id="AST-1000"
@@ -286,6 +299,259 @@ class StatefulInvestigatorTests(unittest.TestCase):
         self.assertEqual(request.capability.identity, self.context.identity)
         self.assertEqual(request.capability.resource, self.context.resource)
         self.assertEqual(request.status, InformationRequestStatus.AUTHORIZED)
+
+    def test_record_rejects_forged_policy_preview_and_identity(self) -> None:
+        investigator = Investigator(CapabilityPolicy(rules=(self.rule,)))
+        evidence = make_evidence()
+        preview = investigator.investigate(evidence, self.context)
+        forged_request = CapabilityRequest(
+            agent_id="attacker-agent",
+            identity="attacker-identity",
+            tool=READ_ONLY_INVESTIGATION_TOOL,
+            action=CapabilityAction.READ,
+            resource="events/other",
+        )
+        forged_preview = AuthorizationPreview(
+            evidence_event_id=evidence.event_id,
+            evidence_contract_version=evidence.CONTRACT_VERSION,
+            review_trigger=preview.review_trigger,
+            observations=preview.observations,
+            hypotheses=preview.hypotheses,
+            proposed_capability=forged_request,
+            decision=SecurityDecision(
+                forged_request,
+                DecisionState.ALLOWED,
+                "forged",
+                1,
+            ),
+        )
+
+        with self.assertRaises(ValueError):
+            InvestigationRecord(
+                "AST-forged",
+                evidence,
+                self.context,
+                forged_preview,
+                investigator.policy,
+            )
+
+    def test_record_rejects_every_request_substitution(self) -> None:
+        investigator = Investigator(CapabilityPolicy(rules=(self.rule,)))
+        evidence = make_evidence()
+        preview = investigator.investigate(evidence, self.context)
+        substitutions = {
+            "agent_id": "attacker-agent",
+            "identity": "attacker-identity",
+            "tool": "attacker_tool",
+            "action": CapabilityAction.WRITE,
+            "resource": "events/other",
+        }
+
+        for field_name, replacement in substitutions.items():
+            with self.subTest(field_name=field_name):
+                fields = {
+                    "agent_id": self.context.agent_id,
+                    "identity": self.context.identity,
+                    "tool": READ_ONLY_INVESTIGATION_TOOL,
+                    "action": CapabilityAction.READ,
+                    "resource": self.context.resource,
+                }
+                fields[field_name] = replacement
+                forged_request = CapabilityRequest(**fields)
+                forged_preview = AuthorizationPreview(
+                    evidence_event_id=evidence.event_id,
+                    evidence_contract_version=evidence.CONTRACT_VERSION,
+                    review_trigger=preview.review_trigger,
+                    observations=preview.observations,
+                    hypotheses=preview.hypotheses,
+                    proposed_capability=forged_request,
+                    decision=SecurityDecision(
+                        forged_request,
+                        DecisionState.ALLOWED,
+                        "forged",
+                        1,
+                    ),
+                )
+
+                with self.assertRaises(ValueError):
+                    InvestigationRecord(
+                        f"AST-{field_name}",
+                        evidence,
+                        self.context,
+                        forged_preview,
+                        investigator.policy,
+                    )
+
+    def test_record_policy_snapshot_is_stable_after_caller_mutation(self) -> None:
+        policy = CapabilityPolicy(rules=(self.rule,))
+        investigator = Investigator(policy)
+        record = investigator.start_investigation(
+            make_evidence(model_prediction=0, anomaly_prediction=0), self.context
+        )
+
+        object.__setattr__(policy, "rules", ())
+
+        request = investigator.request_read_only_context(record.investigation_id)
+        self.assertEqual(request.decision.state, DecisionState.ALLOWED)
+        self.assertEqual(request.capability.identity, self.context.identity)
+
+    def test_record_public_request_api_rejects_caller_supplied_decisions(self) -> None:
+        record = Investigator(CapabilityPolicy(rules=(self.rule,))).start_investigation(
+            make_evidence(model_prediction=0, anomaly_prediction=0), self.context
+        )
+        forged_request = CapabilityRequest(
+            "attacker-agent",
+            "attacker-identity",
+            "attacker_tool",
+            CapabilityAction.READ,
+            "events/other",
+        )
+        forged_decision = SecurityDecision(
+            forged_request,
+            DecisionState.ALLOWED,
+            "forged",
+            1,
+        )
+
+        self.assert_state_unchanged(
+            record,
+            TypeError,
+            lambda: record.request_information(forged_request, forged_decision),
+        )
+
+    def test_failed_fulfillment_does_not_append_an_observation(self) -> None:
+        record = Investigator(CapabilityPolicy(rules=())).start_investigation(
+            make_evidence(model_prediction=0, anomaly_prediction=0), self.context
+        )
+        reference = EvidenceReference(
+            "atomic:evt-001",
+            "trusted.context",
+            "evt-001",
+            "atomicity test",
+        )
+        observation = InvestigationObservation(
+            "O-atomic-1",
+            "evt-001",
+            "trusted.context",
+            ObservationClass.FACT,
+            "must not persist when fulfillment fails",
+            (reference,),
+        )
+        self.assert_state_unchanged(
+            record,
+            KeyError,
+            lambda: record.add_observation(observation, request_id="request:9999"),
+        )
+
+    def test_blocked_and_review_requests_cannot_be_fulfilled(self) -> None:
+        blocked = Investigator(CapabilityPolicy(rules=())).start_investigation(
+            make_evidence(), self.context
+        )
+        blocked_request = blocked.information_requests[0]
+        self.assert_state_unchanged(
+            blocked,
+            ValueError,
+            lambda: blocked.fulfill_information_request(
+                blocked_request.request_id,
+                blocked.observations[0].observation_id,
+            ),
+        )
+
+        review_rule = CapabilityRule(
+            agent_id=self.context.agent_id,
+            identity=self.context.identity,
+            tool=READ_ONLY_INVESTIGATION_TOOL,
+            action=CapabilityAction.READ,
+            resource=self.context.resource,
+            requires_human_approval=True,
+        )
+        review = Investigator(CapabilityPolicy(rules=(review_rule,))).start_investigation(
+            make_evidence(), self.context
+        )
+        review_request = review.information_requests[0]
+        self.assert_state_unchanged(
+            review,
+            ValueError,
+            lambda: review.fulfill_information_request(
+                review_request.request_id,
+                review.observations[0].observation_id,
+            ),
+        )
+
+    def test_observation_failure_paths_preserve_complete_state(self) -> None:
+        record = Investigator(CapabilityPolicy(rules=())).start_investigation(
+            make_evidence(model_prediction=0, anomaly_prediction=0), self.context
+        )
+        reference = EvidenceReference(
+            "atomic:evt-001",
+            "trusted.context",
+            "evt-001",
+            "atomicity test",
+        )
+        observation = InvestigationObservation(
+            "O-atomic-1",
+            "evt-001",
+            "trusted.context",
+            ObservationClass.FACT,
+            "valid observation",
+            (reference,),
+        )
+        self.assert_state_unchanged(
+            record,
+            KeyError,
+            lambda: record.fulfill_information_request(
+                "request:9999", record.observations[0].observation_id
+            ),
+        )
+        record.add_observation(observation)
+        self.assert_state_unchanged(record, ValueError, lambda: record.add_observation(observation))
+
+        invalid = InvestigationObservation(
+            "O-invalid-1",
+            "evt-001",
+            "trusted.context",
+            ObservationClass.FACT,
+            "mutated after construction",
+            (reference,),
+        )
+        object.__setattr__(invalid, "references", ())
+        self.assert_state_unchanged(record, ValueError, lambda: record.add_observation(invalid))
+
+        conflicting_reference = EvidenceReference(
+            "atomic:evt-001",
+            "other.context",
+            "evt-001",
+            "conflicting provenance",
+        )
+        conflicting = InvestigationObservation(
+            "O-conflict-1",
+            "evt-001",
+            "other.context",
+            ObservationClass.FACT,
+            "conflicting evidence reference",
+            (conflicting_reference,),
+        )
+        self.assert_state_unchanged(
+            record,
+            ValueError,
+            lambda: record.add_observation(conflicting),
+        )
+
+    def test_unknown_hypothesis_evidence_is_rejected_without_state_change(self) -> None:
+        record = Investigator(CapabilityPolicy(rules=())).start_investigation(
+            make_evidence(model_prediction=0, anomaly_prediction=0), self.context
+        )
+        hypothesis = record.hypotheses[0]
+
+        self.assert_state_unchanged(
+            record,
+            ValueError,
+            lambda: record.update_hypothesis(
+                hypothesis.hypothesis_id,
+                HypothesisStatus.SUPPORTED,
+                supporting_evidence=("unknown:reference",),
+            ),
+        )
 
     def test_timeline_is_chronological_and_correlation_is_inference(self) -> None:
         record = Investigator(CapabilityPolicy(rules=())).start_investigation(

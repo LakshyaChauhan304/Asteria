@@ -12,6 +12,7 @@ from security_layer import (
     CapabilityAction,
     CapabilityPolicy,
     CapabilityRequest,
+    CapabilityRule,
     DecisionState,
     DetectionEvidenceV1,
     DetectionReviewTrigger,
@@ -260,6 +261,72 @@ class FinalAssessment:
         _validate_text_tuple("limitations", self.limitations)
 
 
+@dataclass(frozen=True)
+class ModelSignalProvenance:
+    """Immutable, non-conclusive model output retained for auditability."""
+
+    signal_id: str
+    event_id: str
+    model_identifier: str
+    model_metadata_identifier: str | None
+    model_version: str | None
+    feature_schema_identifier: str | None
+    probability: float
+    prediction: int
+    threshold: float
+    threshold_status: str
+    source_identifier: str
+
+    def __post_init__(self) -> None:
+        _validate_identifier("signal_id", self.signal_id)
+        _validate_identifier("event_id", self.event_id)
+        _validate_identifier("model_identifier", self.model_identifier)
+        _validate_optional_text("model_metadata_identifier", self.model_metadata_identifier)
+        _validate_optional_text("model_version", self.model_version)
+        _validate_optional_text("feature_schema_identifier", self.feature_schema_identifier)
+        _validate_probability("probability", self.probability)
+        _validate_binary_prediction("prediction", self.prediction)
+        _validate_probability("threshold", self.threshold)
+        _validate_text("threshold_status", self.threshold_status)
+        _validate_identifier("source_identifier", self.source_identifier)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "signal_id": self.signal_id,
+            "event_id": self.event_id,
+            "model_identifier": self.model_identifier,
+            "model_metadata_identifier": self.model_metadata_identifier,
+            "model_version": self.model_version,
+            "feature_schema_identifier": self.feature_schema_identifier,
+            "probability": self.probability,
+            "prediction": self.prediction,
+            "threshold": self.threshold,
+            "threshold_status": self.threshold_status,
+            "source_identifier": self.source_identifier,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, object]) -> ModelSignalProvenance:
+        if type(payload) is not dict:
+            raise TypeError("model signal payload must be a built-in dict")
+        expected = {
+            "signal_id",
+            "event_id",
+            "model_identifier",
+            "model_metadata_identifier",
+            "model_version",
+            "feature_schema_identifier",
+            "probability",
+            "prediction",
+            "threshold",
+            "threshold_status",
+            "source_identifier",
+        }
+        if set(payload) != expected:
+            raise ValueError("model signal payload fields do not match the contract")
+        return cls(**payload)
+
+
 class InvestigationRecord:
     """Append-only investigation state with explicit, non-executing transitions."""
 
@@ -269,6 +336,7 @@ class InvestigationRecord:
         evidence: DetectionEvidenceV1,
         context: TrustedObservationContext,
         preview: AuthorizationPreview,
+        policy: CapabilityPolicy,
     ) -> None:
         _validate_identifier("investigation_id", investigation_id)
         if type(evidence) is not DetectionEvidenceV1:
@@ -277,13 +345,22 @@ class InvestigationRecord:
             raise TypeError("context must be a TrustedObservationContext")
         if type(preview) is not AuthorizationPreview:
             raise TypeError("preview must be an AuthorizationPreview")
-        if preview.evidence_event_id != evidence.event_id:
-            raise ValueError("preview must reference the evidence")
+        if type(policy) is not CapabilityPolicy:
+            raise TypeError("policy must be a CapabilityPolicy")
+        policy_snapshot = _snapshot_policy(policy)
+        expected_preview = _build_authorization_preview(
+            evidence,
+            context,
+            policy_snapshot,
+        )
+        if preview != expected_preview:
+            raise ValueError("preview must be derived from the bound policy and context")
 
         self._investigation_id = investigation_id
         self._evidence = evidence
         self._context = context
         self._preview = preview
+        self._policy = policy_snapshot
         self._status = InvestigationStatus.OPEN
         self._evidence_references: dict[str, EvidenceReference] = {}
         self._observations: dict[str, InvestigationObservation] = {}
@@ -293,12 +370,13 @@ class InvestigationRecord:
         self._information_requests: dict[str, InformationRequest] = {}
         self._information_request_history: list[InformationRequest] = []
         self._authorization_history: list[AuthorizationRecord] = []
+        self._model_signals: dict[str, ModelSignalProvenance] = {}
         self._unresolved_questions: list[str] = []
         self._limitations: list[str] = []
         self._final_assessment: FinalAssessment | None = None
         self._seed_from_evidence()
-        if preview.proposed_capability is not None and preview.decision is not None:
-            self.request_information(preview.proposed_capability, preview.decision)
+        if preview.proposed_capability is not None:
+            self.request_information()
 
     @property
     def investigation_id(self) -> str:
@@ -362,6 +440,10 @@ class InvestigationRecord:
         return tuple(self._authorization_history)
 
     @property
+    def model_signals(self) -> tuple[ModelSignalProvenance, ...]:
+        return tuple(self._model_signals.values())
+
+    @property
     def unresolved_questions(self) -> tuple[str, ...]:
         return tuple(self._unresolved_questions)
 
@@ -404,8 +486,14 @@ class InvestigationRecord:
         self._ensure_open_for_mutation()
         if observation.observation_id in self._observations:
             raise ValueError("observation_id must be unique")
+        fulfillment_request = (
+            None
+            if request_id is None
+            else self._authorized_request_for_fulfillment(request_id)
+        )
+        self._validate_observation_for_record(observation)
         for reference in observation.references:
-            self._evidence_references.setdefault(reference.reference_id, reference)
+            self._evidence_references[reference.reference_id] = reference
         self._observations[observation.observation_id] = observation
         self._timeline.append(
             TimelineEntry(
@@ -418,8 +506,20 @@ class InvestigationRecord:
                 occurred_at=observation.occurred_at,
             )
         )
-        if request_id is not None:
-            self.fulfill_information_request(request_id, observation.observation_id)
+        if fulfillment_request is not None:
+            self._record_fulfillment(fulfillment_request, observation.observation_id)
+
+    def add_model_signal(self, signal: ModelSignalProvenance) -> None:
+        """Append a validated model output without treating it as a conclusion."""
+
+        if type(signal) is not ModelSignalProvenance:
+            raise TypeError("signal must be a ModelSignalProvenance")
+        self._ensure_open_for_mutation()
+        if signal.event_id != self._evidence.event_id:
+            raise ValueError("model signal must reference the record event")
+        if signal.signal_id in self._model_signals:
+            raise ValueError("model signal ID must be unique")
+        self._model_signals[signal.signal_id] = signal
 
     def correlate_observations(
         self,
@@ -434,18 +534,21 @@ class InvestigationRecord:
         observations = [self._observations.get(item) for item in observation_ids]
         if any(item is None for item in observations):
             raise ValueError("correlation references an unknown observation")
-        refs = tuple(
-            reference
-            for observation in observations
-            for reference in observation.references  # type: ignore[union-attr]
-        )
+        references_by_id: dict[str, EvidenceReference] = {}
+        for observation in observations:
+            assert observation is not None
+            for reference in observation.references:
+                existing_reference = references_by_id.get(reference.reference_id)
+                if existing_reference is not None and existing_reference != reference:
+                    raise ValueError("correlation found conflicting evidence provenance")
+                references_by_id[reference.reference_id] = reference
         correlation = InvestigationObservation(
             observation_id=f"correlation:{len(self._observations) + 1:04d}",
             event_id=self._evidence.event_id,
             source="investigator.correlation",
             classification=ObservationClass.INFERENCE,
             summary=summary,
-            references=refs,
+            references=tuple(references_by_id.values()),
         )
         self.add_observation(correlation)
         return correlation
@@ -476,37 +579,38 @@ class InvestigationRecord:
         current = self._hypotheses.get(hypothesis_id)
         if current is None:
             raise KeyError(hypothesis_id)
+        resolved_supporting = (
+            current.supporting_evidence
+            if supporting_evidence is None
+            else supporting_evidence
+        )
+        resolved_contradicting = (
+            current.contradicting_evidence
+            if contradicting_evidence is None
+            else contradicting_evidence
+        )
+        self._validate_known_evidence_ids("supporting_evidence", resolved_supporting)
+        self._validate_known_evidence_ids(
+            "contradicting_evidence",
+            resolved_contradicting,
+        )
         updated = replace(
             current,
             status=status,
-            supporting_evidence=(
-                current.supporting_evidence if supporting_evidence is None else supporting_evidence
-            ),
-            contradicting_evidence=(
-                current.contradicting_evidence
-                if contradicting_evidence is None
-                else contradicting_evidence
-            ),
+            supporting_evidence=resolved_supporting,
+            contradicting_evidence=resolved_contradicting,
             revision=current.revision + 1,
         )
         self._hypotheses[hypothesis_id] = updated
         self._hypothesis_history.append(updated)
         return updated
 
-    def request_information(
-        self,
-        capability: CapabilityRequest,
-        decision: SecurityDecision,
-    ) -> InformationRequest:
+    def request_information(self) -> InformationRequest:
+        """Request only the bound record's fixed read-only context capability."""
+
         self._ensure_open_for_mutation()
-        if type(capability) is not CapabilityRequest:
-            raise TypeError("capability must be a CapabilityRequest")
-        if type(decision) is not SecurityDecision:
-            raise TypeError("decision must be a SecurityDecision")
-        if decision.request != capability:
-            raise ValueError("decision must describe the capability")
-        if capability.action is not CapabilityAction.READ:
-            raise ValueError("the first Investigator vertical slice is read-only")
+        capability = _read_only_request_from_context(self._context)
+        decision = self._policy.evaluate(capability)
         request_id = f"request:{len(self._information_request_history) + 1:04d}"
         status = {
             DecisionState.BLOCKED: InformationRequestStatus.BLOCKED,
@@ -524,24 +628,80 @@ class InvestigationRecord:
 
     def fulfill_information_request(self, request_id: str, observation_id: str) -> None:
         self._ensure_open_for_mutation()
-        _validate_identifier("request_id", request_id)
         _validate_identifier("observation_id", observation_id)
+        request = self._authorized_request_for_fulfillment(request_id)
+        if observation_id not in self._observations:
+            raise ValueError("fulfillment must reference an existing observation")
+        self._validate_observation_for_record(
+            self._observations[observation_id],
+            require_known_references=True,
+        )
+        self._record_fulfillment(request, observation_id)
+
+    def _validate_observation_for_record(
+        self,
+        observation: InvestigationObservation,
+        *,
+        require_known_references: bool = False,
+    ) -> None:
+        _validate_identifier("observation_id", observation.observation_id)
+        _validate_identifier("event_id", observation.event_id)
+        _validate_identifier("source", observation.source)
+        if type(observation.classification) is not ObservationClass:
+            raise TypeError("classification must be an ObservationClass")
+        _validate_text("summary", observation.summary)
+        _validate_reference_tuple(observation.references)
+        _validate_timestamp(observation.occurred_at)
+
+        reference_ids: set[str] = set()
+        for reference in observation.references:
+            _validate_evidence_reference(reference)
+            if reference.reference_id in reference_ids:
+                raise ValueError("observation references must be unique")
+            reference_ids.add(reference.reference_id)
+            known_reference = self._evidence_references.get(reference.reference_id)
+            if known_reference is not None and known_reference != reference:
+                raise ValueError("evidence reference provenance conflicts with existing state")
+            if require_known_references and known_reference != reference:
+                raise ValueError("observation references must already be known")
+
+    def _validate_known_evidence_ids(
+        self,
+        field_name: str,
+        evidence_ids: tuple[str, ...],
+    ) -> None:
+        _validate_identifier_tuple(field_name, evidence_ids)
+        unknown_ids = set(evidence_ids) - set(self._evidence_references)
+        if unknown_ids:
+            raise ValueError(f"{field_name} contains unknown evidence references")
+
+    def _authorized_request_for_fulfillment(self, request_id: str) -> InformationRequest:
+        _validate_identifier("request_id", request_id)
         request = self._information_requests.get(request_id)
         if request is None:
             raise KeyError(request_id)
         if request.status is not InformationRequestStatus.AUTHORIZED:
             raise ValueError("only an authorized request can be fulfilled")
-        if observation_id not in self._observations:
-            raise ValueError("fulfillment must reference an existing observation")
+        return request
+
+    def _record_fulfillment(
+        self,
+        request: InformationRequest,
+        observation_id: str,
+    ) -> None:
         fulfilled = replace(
             request,
             status=InformationRequestStatus.FULFILLED,
             observation_ids=(observation_id,),
         )
-        self._information_requests[request_id] = fulfilled
+        self._information_requests[request.request_id] = fulfilled
         self._information_request_history.append(fulfilled)
         self._authorization_history.append(
-            AuthorizationRecord(request_id, request.capability, request.decision)
+            AuthorizationRecord(
+                request.request_id,
+                request.capability,
+                request.decision,
+            )
         )
         if self._status is InvestigationStatus.AWAITING_INFORMATION:
             self.transition_to(InvestigationStatus.OPEN)
@@ -622,6 +782,7 @@ class InvestigationRecord:
             "authorization_history": [
                 _authorization_to_dict(item) for item in self.authorization_history
             ],
+            "model_signals": [item.to_dict() for item in self.model_signals],
             "unresolved_questions": list(self.unresolved_questions),
             "limitations": list(self.limitations),
             "final_assessment": (
@@ -705,29 +866,7 @@ class Investigator:
         """Return a deterministic authorization preview for sealed evidence."""
 
         _validate_investigation_inputs(evidence, context)
-        trigger = review_trigger_from_evidence(evidence)
-        observations = _observations_from_evidence(evidence)
-        if not trigger.review_required:
-            return AuthorizationPreview(
-                evidence_event_id=evidence.event_id,
-                evidence_contract_version=evidence.CONTRACT_VERSION,
-                review_trigger=trigger,
-                observations=observations,
-                hypotheses=(),
-                proposed_capability=None,
-                decision=None,
-            )
-        request = self._request_from_context(context)
-        decision = self.policy.evaluate(request)
-        return AuthorizationPreview(
-            evidence_event_id=evidence.event_id,
-            evidence_contract_version=evidence.CONTRACT_VERSION,
-            review_trigger=trigger,
-            observations=observations,
-            hypotheses=("additional read-only context may help assess this event",),
-            proposed_capability=request,
-            decision=decision,
-        )
+        return _build_authorization_preview(evidence, context, self.policy)
 
     def start_investigation(
         self,
@@ -735,16 +874,65 @@ class Investigator:
         context: TrustedObservationContext,
         investigation_id: str | None = None,
     ) -> InvestigationRecord:
+        record = self._prepare_investigation(evidence, context, investigation_id)
+        self._commit_prepared_investigations((record,))
+        return record
+
+    def _prepare_investigations(
+        self,
+        inputs: tuple[tuple[DetectionEvidenceV1, TrustedObservationContext], ...],
+    ) -> tuple[InvestigationRecord, ...]:
+        """Create unregistered records for an internal all-or-nothing batch."""
+
+        if type(inputs) is not tuple:
+            raise TypeError("inputs must be a tuple of evidence/context pairs")
+        reserved_ids = set(self._investigations)
+        prepared: list[InvestigationRecord] = []
+        for evidence, context in inputs:
+            investigation_id = self._next_investigation_id(reserved_ids)
+            record = self._prepare_investigation(evidence, context, investigation_id)
+            reserved_ids.add(investigation_id)
+            prepared.append(record)
+        return tuple(prepared)
+
+    def _prepare_investigation(
+        self,
+        evidence: DetectionEvidenceV1,
+        context: TrustedObservationContext,
+        investigation_id: str | None = None,
+    ) -> InvestigationRecord:
         _validate_investigation_inputs(evidence, context)
-        preview = self.investigate(evidence, context)
         if investigation_id is None:
-            investigation_id = f"AST-{len(self._investigations) + 1:04d}"
+            investigation_id = self._next_investigation_id(set(self._investigations))
         _validate_identifier("investigation_id", investigation_id)
         if investigation_id in self._investigations:
             raise ValueError("investigation_id must be unique")
-        record = InvestigationRecord(investigation_id, evidence, context, preview)
-        self._investigations[investigation_id] = record
-        return record
+        preview = self.investigate(evidence, context)
+        return InvestigationRecord(investigation_id, evidence, context, preview, self.policy)
+
+    def _commit_prepared_investigations(
+        self,
+        records: tuple[InvestigationRecord, ...],
+    ) -> None:
+        if type(records) is not tuple or any(
+            type(record) is not InvestigationRecord for record in records
+        ):
+            raise TypeError("records must be a tuple of InvestigationRecord values")
+        identifiers = tuple(record.investigation_id for record in records)
+        if len(set(identifiers)) != len(identifiers):
+            raise ValueError("prepared investigation IDs must be unique")
+        if set(identifiers).intersection(self._investigations):
+            raise ValueError("prepared investigation ID already exists")
+        self._investigations.update({record.investigation_id: record for record in records})
+
+    @staticmethod
+    def _next_investigation_id(reserved_ids: set[str]) -> str:
+        sequence = 1
+        while True:
+            candidate = f"AST-{sequence:04d}"
+            if candidate not in reserved_ids:
+                return candidate
+            sequence += 1
 
     def get_investigation(self, investigation_id: str) -> InvestigationRecord:
         _validate_identifier("investigation_id", investigation_id)
@@ -755,9 +943,7 @@ class Investigator:
 
     def request_read_only_context(self, investigation_id: str) -> InformationRequest:
         record = self.get_investigation(investigation_id)
-        request = self._request_from_context(record.context)
-        decision = self.policy.evaluate(request)
-        return record.request_information(request, decision)
+        return record.request_information()
 
     def record_observation(
         self,
@@ -769,19 +955,6 @@ class Investigator:
         record.add_observation(observation, request_id=request_id)
         return record
 
-    @staticmethod
-    def _request_from_context(context: TrustedObservationContext) -> CapabilityRequest:
-        if type(context) is not TrustedObservationContext:
-            raise TypeError("context must be a TrustedObservationContext")
-        return CapabilityRequest(
-            agent_id=context.agent_id,
-            identity=context.identity,
-            tool=READ_ONLY_INVESTIGATION_TOOL,
-            action=CapabilityAction.READ,
-            resource=context.resource,
-        )
-
-
 def _validate_investigation_inputs(
     evidence: DetectionEvidenceV1,
     context: TrustedObservationContext,
@@ -790,6 +963,73 @@ def _validate_investigation_inputs(
         raise TypeError("evidence must be a DetectionEvidenceV1")
     if type(context) is not TrustedObservationContext:
         raise TypeError("context must be a TrustedObservationContext")
+
+
+def _read_only_request_from_context(
+    context: TrustedObservationContext,
+) -> CapabilityRequest:
+    if type(context) is not TrustedObservationContext:
+        raise TypeError("context must be a TrustedObservationContext")
+    return CapabilityRequest(
+        agent_id=context.agent_id,
+        identity=context.identity,
+        tool=READ_ONLY_INVESTIGATION_TOOL,
+        action=CapabilityAction.READ,
+        resource=context.resource,
+    )
+
+
+def _build_authorization_preview(
+    evidence: DetectionEvidenceV1,
+    context: TrustedObservationContext,
+    policy: CapabilityPolicy,
+) -> AuthorizationPreview:
+    _validate_investigation_inputs(evidence, context)
+    if type(policy) is not CapabilityPolicy:
+        raise TypeError("policy must be a CapabilityPolicy")
+    trigger = review_trigger_from_evidence(evidence)
+    observations = _observations_from_evidence(evidence)
+    if not trigger.review_required:
+        return AuthorizationPreview(
+            evidence_event_id=evidence.event_id,
+            evidence_contract_version=evidence.CONTRACT_VERSION,
+            review_trigger=trigger,
+            observations=observations,
+            hypotheses=(),
+            proposed_capability=None,
+            decision=None,
+        )
+    request = _read_only_request_from_context(context)
+    decision = policy.evaluate(request)
+    return AuthorizationPreview(
+        evidence_event_id=evidence.event_id,
+        evidence_contract_version=evidence.CONTRACT_VERSION,
+        review_trigger=trigger,
+        observations=observations,
+        hypotheses=("additional read-only context may help assess this event",),
+        proposed_capability=request,
+        decision=decision,
+    )
+
+
+def _snapshot_policy(policy: CapabilityPolicy) -> CapabilityPolicy:
+    """Copy validated rule data so later caller mutation cannot alter a record."""
+
+    if type(policy) is not CapabilityPolicy:
+        raise TypeError("policy must be a CapabilityPolicy")
+    return CapabilityPolicy(
+        tuple(
+            CapabilityRule(
+                agent_id=rule.agent_id,
+                identity=rule.identity,
+                tool=rule.tool,
+                action=rule.action,
+                resource=rule.resource,
+                requires_human_approval=rule.requires_human_approval,
+            )
+            for rule in policy.rules
+        )
+    )
 
 
 def _observations_from_evidence(evidence: DetectionEvidenceV1) -> tuple[str, ...]:
@@ -813,6 +1053,21 @@ def _validate_text(field_name: str, value: object) -> None:
         raise ValueError(f"{field_name} must be non-empty text")
 
 
+def _validate_optional_text(field_name: str, value: object) -> None:
+    if value is not None:
+        _validate_text(field_name, value)
+
+
+def _validate_probability(field_name: str, value: object) -> None:
+    if type(value) not in {int, float} or not 0.0 <= float(value) <= 1.0:
+        raise ValueError(f"{field_name} must be a probability between 0 and 1")
+
+
+def _validate_binary_prediction(field_name: str, value: object) -> None:
+    if type(value) is not int or value not in {0, 1}:
+        raise ValueError(f"{field_name} must be the integer 0 or 1")
+
+
 def _validate_text_tuple(field_name: str, value: object) -> None:
     if type(value) is not tuple or any(type(item) is not str or not item for item in value):
         raise TypeError(f"{field_name} must be a tuple of non-empty text values")
@@ -830,6 +1085,15 @@ def _validate_reference_tuple(value: object) -> None:
         raise ValueError("references must be a non-empty tuple")
     if any(type(item) is not EvidenceReference for item in value):
         raise TypeError("references must contain only EvidenceReference values")
+
+
+def _validate_evidence_reference(reference: EvidenceReference) -> None:
+    if type(reference) is not EvidenceReference:
+        raise TypeError("reference must be an EvidenceReference")
+    _validate_identifier("reference_id", reference.reference_id)
+    _validate_identifier("source", reference.source)
+    _validate_identifier("event_id", reference.event_id)
+    _validate_text("description", reference.description)
 
 
 def _validate_timestamp(value: object) -> None:

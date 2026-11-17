@@ -198,6 +198,21 @@ class SecurityDecision:
     reason: str
     matched_rule_count: int
 
+    def __post_init__(self) -> None:
+        """Reject malformed or internally inconsistent authorization data."""
+
+        if type(self.request) is not CapabilityRequest:
+            raise TypeError("request must be a CapabilityRequest")
+        if type(self.state) is not DecisionState:
+            raise TypeError("state must be a DecisionState")
+        _validate_identifier("reason", self.reason)
+        if type(self.matched_rule_count) is not int or self.matched_rule_count < 0:
+            raise ValueError("matched_rule_count must be a non-negative integer")
+        if self.state is DecisionState.BLOCKED and self.matched_rule_count != 0:
+            raise ValueError("blocked decisions must not match a capability rule")
+        if self.state is not DecisionState.BLOCKED and self.matched_rule_count != 1:
+            raise ValueError("authorized and review decisions require one matching rule")
+
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-ready representation of the decision."""
 
@@ -270,6 +285,20 @@ class DetectionReviewTrigger:
     review_required: bool
     reasons: tuple[str, ...]
     evidence_contract_version: str
+
+    def __post_init__(self) -> None:
+        """Validate review metadata even when constructed outside the helper."""
+
+        _validate_evidence_text("event_id", self.event_id)
+        if type(self.review_required) is not bool:
+            raise TypeError("review_required must be a bool")
+        if type(self.reasons) is not tuple:
+            raise TypeError("reasons must be a tuple of text values")
+        for reason in self.reasons:
+            _validate_evidence_text("reason", reason)
+        if self.review_required != bool(self.reasons):
+            raise ValueError("review_required must match whether reasons are present")
+        _validate_evidence_text("evidence_contract_version", self.evidence_contract_version)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-ready representation of the review trigger."""
