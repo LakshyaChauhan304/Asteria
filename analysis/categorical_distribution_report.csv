@@ -1,0 +1,4 @@
+feature,train_unique_values,test_unique_values,unseen_test_categories,unseen_category_names,total_variation_distance
+proto,133,131,0,,0.06774540781321739
+state,9,7,2,"ACC, CLO",0.054833354429087246
+service,13,13,0,,0.03574728849030817

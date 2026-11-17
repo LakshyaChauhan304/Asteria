@@ -1,0 +1,6 @@
+proto,total_normal_records,false_positives,average_attack_probability,true_negatives,false_positive_rate_pct
+tcp,27848,6757,0.24603717,21091,24.263860959494398
+udp,8097,2791,0.28504792,5306,34.46955662591083
+igmp,30,5,0.24327837,25,16.666666666666664
+arp,987,0,0.000647008,987,0.0
+ospf,38,0,0.00083783467,38,0.0

@@ -1,0 +1,326 @@
+
+import pandas as pd
+from xgboost import XGBClassifier
+from sklearn.metrics import (
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix
+)
+
+from preprocessing import (
+    load_dataset,
+    prepare_features,
+    create_preprocessor,
+    split_data
+)
+
+from feature_engineering import engineer_features
+
+
+# 1. Load dataset
+df = load_dataset()
+
+# 2. Separate features and target
+X, y = prepare_features(df)
+
+# 3. Apply feature engineering
+X = engineer_features(X)
+
+print("\nEngineered feature shape:", X.shape)
+print("\nNew features:")
+print([
+    "proto_state",
+    "total_bytes",
+    "total_packets",
+    "total_load",
+    "src_dst_byte_ratio",
+    "src_dst_packet_ratio"
+])
+
+# 4. Split data
+X_train, X_val, y_train, y_val = split_data(X, y)
+
+# 5. Create preprocessing pipeline
+preprocessor = create_preprocessor(X_train)
+
+# 6. Transform data
+X_train_processed = preprocessor.fit_transform(X_train)
+X_val_processed = preprocessor.transform(X_val)
+
+# 7. Train XGBoost
+model = XGBClassifier(
+    objective="binary:logistic",
+    n_estimators=300,
+    max_depth=6,
+    learning_rate=0.05,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    reg_lambda=1,
+    eval_metric="logloss",
+    tree_method="hist",
+    random_state=42,
+    n_jobs=-1
+)
+
+print("\nTraining XGBoost with engineered features...")
+model.fit(X_train_processed, y_train)
+
+# 8. Predict probabilities
+y_prob = model.predict_proba(X_val_processed)[:, 1]
+
+# 9. Evaluate at multiple thresholds
+thresholds = [0.50, 0.45, 0.40, 0.35]
+
+print("\n" + "=" * 75)
+print("FEATURE-ENGINEERED XGBOOST RESULTS")
+print("=" * 75)
+
+for threshold in thresholds:
+
+    y_pred = (y_prob >= threshold).astype(int)
+
+    tn, fp, fn, tp = confusion_matrix(
+        y_val, y_pred, labels=[0, 1]
+    ).ravel()
+
+    precision = precision_score(y_val, y_pred, zero_division=0)
+    recall = recall_score(y_val, y_pred, zero_division=0)
+    f1 = f1_score(y_val, y_pred, zero_division=0)
+
+    fpr = fp / (fp + tn) if (fp + tn) else 0
+
+    print(f"\nThreshold: {threshold}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall: {recall:.4f}")
+    print(f"F1 Score: {f1:.4f}")
+    print(f"False Positive Rate: {fpr:.4f}")
+
+    print(f"TN: {tn} | FP: {fp}")
+    print(f"FN: {fn} | TP: {tp}")
+
+
+
+
+# 10. Detailed error analysis at threshold 0.50
+
+threshold = 0.50
+y_pred = (y_prob >= threshold).astype(int)
+
+# Recover original validation records and their attack categories
+validation_df = df.loc[X_val.index].copy()
+validation_df["actual"] = y_val
+validation_df["predicted"] = y_pred
+
+print("\n" + "=" * 65)
+print("ATTACK CATEGORY RECALL")
+print("=" * 65)
+
+attack_rows = validation_df[validation_df["actual"] == 1]
+
+category_results = (
+    attack_rows.groupby("attack_cat")
+    .apply(
+        lambda group: (
+            (group["predicted"] == 1).sum() / len(group)
+        ),
+        include_groups=False
+    )
+)
+
+print((category_results * 100).round(2).sort_values())
+
+# False-positive analysis
+false_positives = validation_df[
+    (validation_df["actual"] == 0) &
+    (validation_df["predicted"] == 1)
+]
+
+print("\n" + "=" * 65)
+print("FALSE POSITIVES BY PROTOCOL AND STATE")
+print("=" * 65)
+
+print(
+    false_positives.groupby(["proto", "state"])
+    .size()
+    .sort_values(ascending=False)
+    .head(15)
+)
+
+print("\nTotal false positives:", len(false_positives))
+
+
+
+# 11. Investigate false positives within major protocol-state groups
+
+print("\n" + "=" * 75)
+print("FALSE POSITIVE FEATURE ANALYSIS")
+print("=" * 75)
+
+features_to_compare = [
+    "sttl",
+    "dttl",
+    "ct_state_ttl",
+    "sload",
+    "dload",
+    "rate",
+    "sbytes",
+    "dbytes",
+    "spkts",
+    "dpkts",
+    "dur",
+    "ct_srv_src",
+    "ct_srv_dst",
+    "ct_dst_src_ltm",
+    "smean",
+    "dmean"
+]
+
+for proto, state in [("tcp", "FIN"), ("udp", "INT")]:
+
+    subset = validation_df[
+        (validation_df["proto"] == proto) &
+        (validation_df["state"] == state) &
+        (validation_df["actual"] == 0)
+    ]
+
+    true_negatives = subset[subset["predicted"] == 0]
+    false_positives = subset[subset["predicted"] == 1]
+
+    print(f"\n{'-' * 65}")
+    print(f"PROTOCOL: {proto.upper()} | STATE: {state}")
+    print("-" * 65)
+
+    print("True Negatives:", len(true_negatives))
+    print("False Positives:", len(false_positives))
+
+    if len(true_negatives) == 0 or len(false_positives) == 0:
+        print("Not enough samples for comparison.")
+        continue
+
+    comparison = pd.DataFrame({
+        "TN_Median": true_negatives[features_to_compare].median(),
+        "FP_Median": false_positives[features_to_compare].median()
+    })
+
+    comparison["Difference"] = (
+        comparison["FP_Median"] - comparison["TN_Median"]
+    )
+
+    print("\nMedian comparison:")
+    print(comparison.round(3).to_string())
+
+
+
+
+# 12. Prediction confidence analysis
+
+validation_df["attack_probability"] = y_prob
+
+print("\n" + "=" * 75)
+print("PREDICTION CONFIDENCE: TRUE NEGATIVES VS FALSE POSITIVES")
+print("=" * 75)
+
+for proto, state in [("tcp", "FIN"), ("udp", "INT")]:
+
+    subset = validation_df[
+        (validation_df["proto"] == proto) &
+        (validation_df["state"] == state) &
+        (validation_df["actual"] == 0)
+    ]
+
+    tn = subset[subset["predicted"] == 0]
+    fp = subset[subset["predicted"] == 1]
+
+    print(f"\n{proto.upper()} - {state}")
+    print("-" * 55)
+
+    print("\nTrue Negative prediction scores:")
+    print(tn["attack_probability"].describe(
+        percentiles=[0.25, 0.50, 0.75, 0.90]
+    ).round(4))
+
+    print("\nFalse Positive prediction scores:")
+    print(fp["attack_probability"].describe(
+        percentiles=[0.25, 0.50, 0.75, 0.90]
+    ).round(4))
+
+    print("\nFalse-positive counts at different thresholds:")
+
+    for threshold in [0.50, 0.45, 0.40, 0.35]:
+        count = (
+            subset["attack_probability"] >= threshold
+        ).sum()
+
+        print(f"Threshold {threshold}: {count}")
+
+
+# 13. Explain predictions using XGBoost feature contributions
+
+from xgboost import DMatrix
+
+print("\n" + "=" * 75)
+print("FEATURE CONTRIBUTION ANALYSIS")
+print("=" * 75)
+
+# Get names of features after preprocessing and one-hot encoding
+feature_names = preprocessor.get_feature_names_out().tolist()
+
+# Create XGBoost DMatrix
+validation_matrix = DMatrix(
+    X_val_processed,
+    feature_names=feature_names
+)
+
+# Obtain SHAP contributions
+contributions = model.get_booster().predict(
+    validation_matrix,
+    pred_contribs=True
+)
+
+# Last column is the bias/base contribution
+contribution_df = pd.DataFrame(
+    contributions[:, :-1],
+    columns=feature_names,
+    index=X_val.index
+)
+
+# Analyze the two major false-positive groups
+for proto, state in [("tcp", "FIN"), ("udp", "INT")]:
+
+    group = validation_df[
+        (validation_df["proto"] == proto) &
+        (validation_df["state"] == state) &
+        (validation_df["actual"] == 0)
+    ]
+
+    fp_indices = group[group["predicted"] == 1].index
+    tn_indices = group[group["predicted"] == 0].index
+
+    print(f"\n{proto.upper()} - {state}")
+    print("-" * 65)
+
+    # Average absolute contribution: how strongly features influence predictions
+    fp_importance = contribution_df.loc[fp_indices].abs().mean()
+    tn_importance = contribution_df.loc[tn_indices].abs().mean()
+
+    comparison = pd.DataFrame({
+        "FP_Mean_Absolute": fp_importance,
+        "TN_Mean_Absolute": tn_importance
+    })
+
+    comparison["FP_Mean_Signed"] = (
+        contribution_df.loc[fp_indices].mean()
+    )
+
+    comparison["TN_Mean_Signed"] = (
+        contribution_df.loc[tn_indices].mean()
+    )
+
+    print("\nTop features influencing false-positive predictions:")
+    print(
+        comparison.sort_values(
+            "FP_Mean_Absolute",
+            ascending=False
+        ).head(15).round(4).to_string()
+    )
