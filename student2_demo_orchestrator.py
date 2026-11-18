@@ -16,7 +16,7 @@ from student2_demo_environment import ApprovalDecision, ApprovalEvent, DemoEnvir
 from student2_demo_verifier import DemoVerifier, VerificationResult, VerificationStatus
 from student2_detection_facade import Student2DetectionFacade
 from student2_detection_to_investigator import DetectionInvestigationResult, Student2DetectionToInvestigator
-from student2_red_agent import RedAgent, RedAgentFinding
+from student2_red_agent import RedAgent, RedAgentFinding, scenario_definition
 from student2_xgboost_runtime import XGBoostRuntime
 
 
@@ -161,7 +161,16 @@ class DemoOrchestrator:
             }
             for item in self._results
         ]
-        report = {"workflow_state": self.state.value, "incident_status": self.incident_status.value, "environment": {"environment_id": self.environment.environment_id, "initial_state": self.environment.initial_state, "current_state": self.environment.current_state, "audit_history": [item.to_dict() for item in self.environment.audit_history]}, "telemetry": [] if self._bundle is None else list(self._bundle.telemetry_rows), "detection_cases": cases, "selected_event_id": None if self.selected is None else self.selected.detection.event_id, "investigation": None if self.selected is None else self.selected.investigation.to_dict(), "red_finding": None if self.finding is None else self.finding.to_dict(), "recommendations": [item.to_dict() for item in self.recommendations], "approval": None if self.approval is None else self.approval.to_dict(), "remediation_audit": None if self.audit is None else self.audit.to_dict(), "verification": None if self.verification is None else self.verification.to_dict()}
+        graph = {}
+        if self.finding is not None:
+            scenario = scenario_definition(self.finding.scenario_id)
+            graph = {
+                "nodes": [asdict(node) for node in scenario.graph.nodes],
+                "edges": [asdict(edge) for edge in scenario.graph.edges],
+                "candidate_path": self.finding.to_dict()["candidate_path"],
+                "control_id": scenario.control_id,
+            }
+        report = {"workflow_state": self.state.value, "incident_status": self.incident_status.value, "environment": {"environment_id": self.environment.environment_id, "initial_state": self.environment.initial_state, "current_state": self.environment.current_state, "audit_history": [item.to_dict() for item in self.environment.audit_history]}, "telemetry": [] if self._bundle is None else list(self._bundle.telemetry_rows), "detection_cases": cases, "selected_event_id": None if self.selected is None else self.selected.detection.event_id, "investigation": None if self.selected is None else self.selected.investigation.to_dict(), "red_finding": None if self.finding is None else self.finding.to_dict(), "attack_graph": graph, "recommendations": [item.to_dict() for item in self.recommendations], "approval": None if self.approval is None else self.approval.to_dict(), "remediation_audit": None if self.audit is None else self.audit.to_dict(), "verification": None if self.verification is None else self.verification.to_dict()}
         json.dumps(report)
         return report
 

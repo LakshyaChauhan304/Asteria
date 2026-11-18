@@ -97,8 +97,19 @@ def load_demo_data(
     ground_truth = selected.loc[:, [_ID_COLUMN, _LABEL_COLUMN, _ATTACK_CATEGORY_COLUMN]].copy()
     ground_truth.insert(0, "event_id", event_ids.tolist())
     telemetry_columns = ("event_id", "proto", "service", "state", "dur", "sbytes", "dbytes")
-    telemetry_frame = selected.loc[:, ["proto", "service", "state", "dur", "sbytes", "dbytes"]].copy()
-    telemetry_frame.insert(0, "event_id", event_ids.tolist())
+    # These fields are display-only. Compact test fixtures and future datasets
+    # may omit optional telemetry columns, which must never affect inference.
+    telemetry_frame = pd.DataFrame(
+        {
+            "event_id": event_ids.tolist(),
+            "proto": selected.get("proto", pd.Series("—", index=selected.index)),
+            "service": selected.get("service", pd.Series("—", index=selected.index)),
+            "state": selected.get("state", pd.Series("—", index=selected.index)),
+            "dur": selected.get("dur", pd.Series(0.0, index=selected.index)),
+            "sbytes": selected.get("sbytes", pd.Series(0, index=selected.index)),
+            "dbytes": selected.get("dbytes", pd.Series(0, index=selected.index)),
+        }
+    )
     telemetry_rows = tuple(
         {
             "event_id": str(row.event_id),

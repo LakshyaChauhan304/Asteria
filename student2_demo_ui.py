@@ -30,6 +30,7 @@ CSS = CSS.replace(
 )
 CSS = CSS.replace("</style>", ".top{position:sticky;top:0;z-index:100;background:#060b15eF;backdrop-filter:blur(12px)}.shell{scroll-margin-top:58px}</style>")
 CSS = CSS.replace("</style>", ".workflow-cta{display:flex;justify-content:center;padding:28px 0 16px}.workflow-cta a{min-width:min(520px,92vw);border:1px solid #e8ae2b;background:#0b121d;color:#e8ae2b;text-align:center;text-decoration:none;padding:18px 24px;font:12px ui-monospace,Consolas,monospace;letter-spacing:2px}.workflow-cta a:hover{background:#e8ae2b;color:#07101b}.workflow-cta i{float:right;font-style:normal}.case-evidence{border-top:1px solid #263242;margin-top:20px;padding-top:15px;color:#cbbfae;font:13px ui-monospace,Consolas,monospace;line-height:1.55}.case-evidence p{margin:9px 0}</style>")
+CSS = CSS.replace("</style>", "html,body{height:100%;overflow:hidden}.top{left:0;right:0}.shell{height:calc(100vh - 91px);margin-top:56px;overflow-y:auto;overflow-x:hidden;padding-bottom:70px}.footer{z-index:101}.signal-console{padding-top:52px;gap:28px}.signal-link{margin-top:28px}.record-graph{min-height:calc(100vh - 300px);display:flex;align-items:center;justify-content:center;gap:14px;padding:48px 18px}.record-node{flex:1;min-width:150px;max-width:260px;border:1px solid #3a495c;background:#09121f;padding:18px;position:relative}.record-node:before{content:'';position:absolute;left:0;top:0;width:100%;height:3px;background:#e7ae2c}.record-node.red:before{background:#ff6873}.record-node.mint:before{background:#39daba}.record-node label{display:block;color:#a8b7c8;font:10px ui-monospace,Consolas,monospace;letter-spacing:1.3px}.record-node h2{font:24px Georgia,serif;margin:22px 0 10px}.record-node p{color:#c5b9aa;font:14px Georgia,serif;line-height:1.4}.graph-arrow{color:#9fb0bf;font:32px Georgia,serif}.graph-empty{height:100%;min-height:440px;display:grid;place-items:center;border:1px dashed #536274;color:#9dacbc;font:14px ui-monospace,Consolas,monospace;text-align:center;padding:30px}@media(max-width:1100px){.record-graph{align-items:stretch;flex-direction:column;min-height:unset}.graph-arrow{transform:rotate(90deg);text-align:center}.record-node{max-width:none}.shell{height:calc(100vh - 91px)}}@media(max-width:720px){html,body{overflow:auto}.shell{height:auto;overflow:visible}.top{position:sticky}}</style>")
 
 CSS = CSS.replace(".nav span{", ".nav span,.nav a{").replace(".nav .on{", ".nav .on{")
 CSS = CSS.replace("</style>", ".top-action{border:1px solid #e8ae2b;color:#e8ae2b;text-decoration:none;padding:8px 11px;font:9px ui-monospace,Consolas,monospace;letter-spacing:1.2px;white-space:nowrap}.top-action:hover{background:#e8ae2b;color:#07101b}</style>")
@@ -135,6 +136,31 @@ def _box_flow(kind: str) -> str:
     return f'<div class="flow-map">{left}<span class="flow-arrow">→</span>{right}{end}</div><div class="flow-caption">{caption}</div>'
 
 
+def _record_graph(report: Mapping[str, object], panel: str) -> str:
+    graph = _m(report, "attack_graph")
+    nodes = graph.get("nodes")
+    path = _m(graph, "candidate_path")
+    node_ids = path.get("node_ids") if isinstance(path.get("node_ids"), list) else []
+    if not isinstance(nodes, list) or not nodes:
+        return '<div class="graph-empty">Create an attack path for the selected case to render its simulated graph.</div>'
+    cards = []
+    for index, node in enumerate(nodes, 1):
+        if not isinstance(node, Mapping):
+            continue
+        node_id = str(node.get("node_id", ""))
+        tone = "red" if panel == "red" and node_id in node_ids else "mint" if panel != "red" else "amber"
+        cards.append(f'<article class="record-node {tone}"><label>{index:02d} · {_s(node.get("asset_type"), "asset")}</label><h2>{_s(node.get("display_name"))}</h2><p>{_s(node.get("description"))}</p></article>')
+    if panel == "blue":
+        recommendation = next((item for item in report.get("recommendations", []) if isinstance(item, Mapping)), {})
+        cards.append(f'<article class="record-node mint"><label>CONTROL · PROPOSAL</label><h2>{_s(recommendation.get("title"), "Awaiting proposal")}</h2><p>{_s(recommendation.get("expected_security_effect"), "No control proposed yet.")}</p></article>')
+    if panel == "verification":
+        verification = _m(report, "verification")
+        checks = verification.get("checks") if isinstance(verification.get("checks"), list) else []
+        cards = [f'<article class="record-node {"mint" if item.get("passed") else "red"}"><label>CHECK · {_s(item.get("name"))}</label><h2>{"PASSED" if item.get("passed") else "FAILED"}</h2><p>{_s(item.get("explanation"))}</p></article>' for item in checks if isinstance(item, Mapping)] or cards
+    caption = _s(_m(report, "red_finding").get("explanation"), "Graph will appear after the selected case enters simulation.")
+    return f'<div class="record-graph">{"<span class=\"graph-arrow\">→</span>".join(cards)}</div><div class="flow-caption">{caption}</div>'
+
+
 def _left(title: str, copy: str, facts: tuple[tuple[str, str, str], ...]) -> str:
     details = "".join(f'<div class="fact"><label>{label}</label><b class="{tone}">{value}</b></div>' for label, value, tone in facts)
     return f'<aside><span class="kicker">{title.upper()}</span><h1 class="display">{title}</h1><p class="copy">{copy}</p><div class="rule"></div>{details}</aside>'
@@ -192,7 +218,7 @@ def investigations_html(report: Mapping[str, object]) -> str:
 
 def red_html(report: Mapping[str, object]) -> str:
     left = _left("Candidate path", "A simulated adversary route in an isolated graph. It holds no authority and touches no live system.", (("SCENARIO", "Exposed API", ""), ("AGENT", "Red agent · 04A", ""), ("AUTHORITY", "None · simulated", "red"), ("RESULT", "Reachable in the isolated graph", "")))
-    center = f'<section class="center red-center">{_box_flow("red")}<span class="hand">HAND TO BLUE AGENT</span></section>'
+    center = f'<section class="center red-center">{_record_graph(report, "red")}<span class="hand">SIMULATED PATH · HAND TO BLUE AGENT</span></section>'
     right = '<section class="right"><span class="right-title">PATH STEPS</span><div class="path-list"><div><b>01</b><p>External actor</p><small>untrusted origin</small></div><div><b>02</b><p>Public API</p><small>simulated entry point</small></div><div><b>03</b><p>Workload identity</p><small>simulated trust hop</small></div><div><b>04</b><p>Sensitive data store</p><small>protected target</small></div></div></section>'
     return _header("Red Simulation", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div>{_bottom_action(report, ("red_simulated",))}</main>' + _footer()
 
@@ -201,14 +227,14 @@ def blue_html(report: Mapping[str, object]) -> str:
     items = report.get("recommendations")
     rec = items[0] if isinstance(items, list) and items and isinstance(items[0], Mapping) else {}
     left = _left("Control proposed", "A defensive control is proposed against the simulated path. A proposal grants nothing; the human gate decides.", (("CONTROL", _s(rec.get("target_control_id"), "ingress_restricted"), "mint mono"), ("TARGET", "Public API · entry point", ""), ("AUTHORITY", "None · proposal only", ""), ("HUMAN GATE", _s(_m(report, "approval").get("decision"), "Approved"), "mint")))
-    center = f'<section class="center blue-center">{_box_flow("blue")}</section>'
+    center = f'<section class="center blue-center">{_record_graph(report, "blue")}</section>'
     right = f'<section class="right"><span class="right-title">CONTROL SPECIFICATION</span><div class="spec"><label>TYPE</label><p>Ingress restriction</p></div><div class="spec"><label>SCOPE</label><p>Public API</p></div><div class="spec"><label>EXECUTION</label><p>Sandbox only</p></div>{_route_link("Verification", "VIEW VERIFICATION")}</section>'
     return _header("Blue Response", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div>{_bottom_action(report, ("blue_recommended",))}</main>' + _footer()
 
 
 def verification_html(report: Mapping[str, object]) -> str:
     left = _left("Path unreachable", "The verifier re-ran the path query after the approved sandbox control. It is independent of the agents that proposed it.", (("RESULT", "Passed · path unreachable", "mint"), ("CONTROL", "ingress_restricted", "mono"), ("VERIFIER", "07 · independent", "")))
-    center = '''<section class="center verify-center">''' + _box_flow("verification") + '''</section>'''
+    center = f'<section class="center verify-center">{_record_graph(report, "verification")}</section>'
     right = f'<section class="right"><span class="right-title">VERIFIER CHECKS</span><div class="checks"><div><b>■</b>Path query re-run after the control</div><div><b>■</b>External actor to sensitive data store: unreachable</div><div><b>■</b>Result recorded as verified state</div></div><div class="fact"><label>VERIFIED STATE</label><b class="mint">Passed</b></div>{_route_link("Audit & Reports", "OPEN IN AUDIT")}</section>'
     return _header("Verification", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div>{_bottom_action(report, ("verified",))}</main>' + _footer()
 

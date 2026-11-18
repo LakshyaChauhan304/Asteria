@@ -1,5 +1,6 @@
 :root { --bg:#050A11; --panel:#091522; --line:#153148; --cyan:#00D9F5; --blue:#3998FF; --mint:#00D9A0; --amber:#FFBD39; --red:#FF5968; --text:#D9E8F5; --muted:#8096AA; }
 .stApp { background-color:var(--bg); background-image:linear-gradient(#0c263033 1px,transparent 1px),linear-gradient(90deg,#0c263033 1px,transparent 1px),radial-gradient(circle at 65% 0%,#0d2634 0,transparent 38%); background-size:24px 24px,24px 24px,100% 100%; color:var(--text); }
+[data-testid="stAppViewContainer"], [data-testid="stAppViewContainer"] > .main { height:100vh!important; overflow:hidden!important; }
 .stApp, .stApp [class*="css"] { font-family: ui-monospace,SFMono-Regular,Consolas,monospace; }
 .stSidebar { background:#07111c!important; border-right:1px solid var(--line); }
 .stButton>button { border:1px solid #1d5268; background:#081827; color:var(--cyan); border-radius:3px; letter-spacing:.06em; }
