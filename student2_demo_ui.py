@@ -29,6 +29,7 @@ CSS = CSS.replace(
 </style>""",
 )
 CSS = CSS.replace("</style>", ".top{position:sticky;top:0;z-index:100;background:#060b15eF;backdrop-filter:blur(12px)}.shell{scroll-margin-top:58px}</style>")
+CSS = CSS.replace("</style>", ".workflow-cta{display:flex;justify-content:center;padding:28px 0 16px}.workflow-cta a{min-width:min(520px,92vw);border:1px solid #e8ae2b;background:#0b121d;color:#e8ae2b;text-align:center;text-decoration:none;padding:18px 24px;font:12px ui-monospace,Consolas,monospace;letter-spacing:2px}.workflow-cta a:hover{background:#e8ae2b;color:#07101b}.workflow-cta i{float:right;font-style:normal}.case-evidence{border-top:1px solid #263242;margin-top:20px;padding-top:15px;color:#cbbfae;font:13px ui-monospace,Consolas,monospace;line-height:1.55}.case-evidence p{margin:9px 0}</style>")
 
 CSS = CSS.replace(".nav span{", ".nav span,.nav a{").replace(".nav .on{", ".nav .on{")
 CSS = CSS.replace("</style>", ".top-action{border:1px solid #e8ae2b;color:#e8ae2b;text-decoration:none;padding:8px 11px;font:9px ui-monospace,Consolas,monospace;letter-spacing:1.2px;white-space:nowrap}.top-action:hover{background:#e8ae2b;color:#07101b}</style>")
@@ -46,18 +47,32 @@ def _action_link(report: Mapping[str, object]) -> str:
     state = str(report.get("workflow_state", "created"))
     actions = {
         "created": ("initialize", "Detection Engine", "INITIALIZE MODELS"),
-        "models_ready": ("detect", "Detection Engine", "RUN DETECTION"),
-        "detected": ("investigate", "Investigations", "START INVESTIGATION"),
-        "investigated": ("red", "Red Simulation", "RUN RED SIMULATION"),
-        "red_simulated": ("blue", "Blue Response", "GENERATE BLUE PROPOSAL"),
-        "blue_recommended": ("approve", "Blue Response", "APPROVE SANDBOX CONTROL"),
-        "awaiting_approval": ("apply", "Verification", "APPLY SIMULATION"),
-        "remediation_in_progress": ("verify", "Verification", "RUN VERIFIER"),
-        "verified": ("", "Audit & Reports", "OPEN AUDIT"),
+        "models_ready": ("detect", "Investigations", "RUN DETECTION"),
+        "investigated": ("red", "Red Simulation", "CREATE ATTACK PATH"),
+        "red_simulated": ("blue", "Blue Response", "PROPOSE FIXES"),
+        "blue_recommended": ("verify_control", "Verification", "VERIFY SANDBOX CONTROL"),
+        "verified": ("", "Audit & Reports", "OPEN AUDIT REPORT"),
     }
     action, view, label = actions.get(state, ("", "Command Center", "VIEW COMMAND"))
     query = f"?view={view.replace(' ', '%20')}" + (f"&action={action}" if action else "")
     return f'<a class="top-action" href="/{query}" target="_top">{label}</a>'
+
+
+def _bottom_action(report: Mapping[str, object], allowed_states: tuple[str, ...]) -> str:
+    state = str(report.get("workflow_state", "created"))
+    if state not in allowed_states:
+        return ""
+    actions = {
+        "created": ("initialize", "Detection Engine", "INITIALIZE MODELS"),
+        "models_ready": ("detect", "Investigations", "RUN DETECTION"),
+        "investigated": ("red", "Red Simulation", "CREATE ATTACK PATH"),
+        "red_simulated": ("blue", "Blue Response", "PROPOSE FIXES"),
+        "blue_recommended": ("verify_control", "Verification", "VERIFY SANDBOX CONTROL"),
+        "verified": ("", "Audit & Reports", "OPEN AUDIT REPORT"),
+    }
+    action, view, label = actions[state]
+    query = f"/?view={view.replace(' ', '%20')}" + (f"&action={action}" if action else "")
+    return f'<div class="workflow-cta"><a href="{query}" target="_top">{label}<i>→</i></a></div>'
 
 
 def _route_link(view: str, label: str) -> str:
@@ -77,7 +92,7 @@ def _header(active: str, report: Mapping[str, object]) -> str:
     )
     verified = _m(report, "verification").get("status") == "verified"
     script = '''<div class="dialog" id="detail-dialog"><div class="dialog-card"><button onclick="closeDetail()">×</button><h2 id="detail-title"></h2><p id="detail-body"></p></div></div><script>function openDetail(title,body){document.getElementById('detail-title').textContent=title;document.getElementById('detail-body').textContent=body;document.getElementById('detail-dialog').classList.add('open')}function closeDetail(){document.getElementById('detail-dialog').classList.remove('open')}document.addEventListener('click',function(event){if(event.target.id==='detail-dialog'){closeDetail()}});document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('.node,.selector span,.path-list div,.spec,.checks div,.trace-row,.eclass,.case,.signal-card,.mini-orb').forEach(function(item){item.classList.add('interactive');item.addEventListener('click',function(){var title=item.textContent.trim().replace(/\s+/g,' ').slice(0,70)||'Asteria detail';openDetail(title,'Recorded demo detail. This view presents evidence, simulation, approval, or verification state only. It does not perform live infrastructure actions.')})})})</script>'''
-    return f'''{CSS}<header class="top"><div class="brand"><span class="star">✦</span>Asteria <small>AUTONOMOUS THREAT<br>INTERCEPT ENGINE</small></div><span class="top-status">● SIMULATION · ISOLATED GRAPH</span><span class="top-status mint">● {"TRACE VERIFIED" if verified else "TRACE PENDING"}</span><nav class="nav">{nav}</nav>{_action_link(report)}</header>{script}'''
+    return f'''{CSS}<header class="top"><div class="brand"><span class="star">✦</span>Asteria <small>AUTONOMOUS THREAT<br>INTERCEPT ENGINE</small></div><span class="top-status">● SIMULATION · ISOLATED GRAPH</span><span class="top-status mint">● {"TRACE VERIFIED" if verified else "TRACE PENDING"}</span><nav class="nav">{nav}</nav></header>{script}'''
 
 
 def _footer() -> str:
@@ -142,8 +157,8 @@ def command_center_html(report: Mapping[str, object]) -> str:
     event = _s(report.get("selected_event_id"), "UNSW-NB15-8318")
     left = _left("AST–0001", "Exposed API path to a sensitive data store, intercepted at ingress.", (("DETECTION EVENT", event, "mono"), ("SIGNALS", "3 independent outputs", ""), ("HUMAN GATE", _s(_m(report, "approval").get("decision"), "Approved"), "mint"), ("VERIFICATION", "Passed · path unreachable", "mint")))
     stages = "".join(f'<span class="{"on" if index == 1 else ""}">{label}</span>' for index, label in enumerate(("01", "02", "03", "04A", "04B", "05", "06", "07"), 1))
-    right = f'''<section class="right"><span class="right-title">STAGE INSPECTOR · READ ONLY</span><div class="selector">{stages}</div><h2 class="stage-name">Telemetry</h2><div class="inspect"><label>INPUT</label><p>Network flow record ingested for scoring. Read only.</p></div><div class="inspect"><label>OUTPUT</label><p>{event}</p></div><div class="inspect"><label>AUTHORITY</label><p>None · data only</p></div>{_route_link("Audit & Reports", "OPEN IN AUDIT")}<div class="hyp"><span class="kicker">HYPOTHESIS · UNCONFIRMED</span><br>A detection signal may warrant investigation. It is not proof of compromise and never grants authorization.</div></section>'''
-    return _header("Command Center", report) + f'<main class="shell"><div class="layout">{left}<section class="center">{_orbital(report)}</section>{right}</div></main>' + _footer()
+    right = f'''<section class="right"><span class="right-title">STAGE INSPECTOR · READ ONLY</span><div class="selector">{stages}</div><h2 class="stage-name">Telemetry</h2><div class="inspect"><label>INPUT</label><p>Network flow record ingested for scoring. Read only.</p></div><div class="inspect"><label>OUTPUT</label><p>{event}</p></div><div class="inspect"><label>AUTHORITY</label><p>None · data only</p></div><div class="hyp"><span class="kicker">HYPOTHESIS · UNCONFIRMED</span><br>A detection signal may warrant investigation. It is not proof of compromise and never grants authorization.</div></section>'''
+    return _header("Command Center", report) + f'<main class="shell"><div class="layout">{left}<section class="center">{_orbital(report)}</section>{right}</div>{_bottom_action(report, ("created",))}</main>' + _footer()
 
 
 def detection_html(report: Mapping[str, object]) -> str:
@@ -153,7 +168,7 @@ def detection_html(report: Mapping[str, object]) -> str:
     left = _left("Signals, not verdicts", "Three independent outputs are recorded for one event. A signal may warrant investigation; it is not proof of compromise.", (("EVENT", _s(report.get("selected_event_id"), "UNSW-NB15-8318"), "mono"), ("SELECTED MODEL", "XGBoost", ""), ("INDEPENDENT OUTPUTS", "3", "")))
     center = f'''<section class="center"><div class="signal-console"><article class="signal-card"><label>MODEL 01 · BASELINE</label><h2>Logistic regression</h2><b>DETECTED</b><p>Supervised baseline output retained with source provenance.</p></article><article class="signal-card"><label>MODEL 02 · ANOMALY</label><h2>Isolation forest</h2><b>ANOMALY</b><p>Unsupervised anomaly signal remains independent from other models.</p></article><article class="signal-card"><label>MODEL 03 · SELECTED</label><h2>XGBoost runtime</h2><b>{score}</b><p>Artifact-backed score for {_s(report.get("selected_event_id"), "UNSW-NB15-8318")}.</p></article></div><div class="signal-link"></div><p class="signal-summary">The investigator receives three model signals as recorded facts. It keeps model outputs separate from inferences, hypotheses, authorization, and execution.</p>{_telemetry_feed(report)}</section>'''
     right = f'''<section class="right"><span class="right-title">EVIDENCE CLASSES</span><div class="eclass"><b>I · FACT</b><p>Each model output remains a recorded detection signal with its own provenance.</p></div><div class="eclass mint"><b>II · INFERENCE</b><p>The investigator may request more read-only context after reviewing the signals.</p></div><div class="eclass red"><b>III · HYPOTHESIS</b><p>Potential compromise stays unconfirmed until independent evidence supports it.</p></div>{_route_link("Investigations", "OPEN AST–0001")}</section>'''
-    return _header("Detection Engine", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
+    return _header("Detection Engine", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div>{_bottom_action(report, ("models_ready",))}</main>' + _footer()
 
 
 def investigations_html(report: Mapping[str, object]) -> str:
@@ -169,15 +184,17 @@ def investigations_html(report: Mapping[str, object]) -> str:
     ) or '<article class="case empty"><div><h2>NO DETECTION RECORDS YET</h2><p>Run detection to create the 20-case queue.</p></div></article>'
     center = f'''<section class="center queue"><span class="kicker">CASE QUEUE · REAL UNSW-NB15 RUN · {len(case_items)} RECORDS</span>{queue_rows}</section>'''
     selected_title = "AST–0001" if report.get("selected_event_id") else "SELECT A CASE"
-    right = f'<section class="right"><span class="right-title">SELECTED CASE</span><h2 class="stage-name">{selected_title}</h2><div class="progress"><div><b>{"7 / 7" if report.get("selected_event_id") else "0 / 7"}</b><small>STAGES</small></div></div><div class="fact"><label>EVENT</label><b class="mono">{event}</b></div><div class="fact"><label>WORKFLOW</label><b class="mint">{_s(report.get("workflow_state"))}</b></div>{_route_link("Audit & Reports", "OPEN CASE")}</section>'
-    return _header("Investigations", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
+    selected_telemetry = next((item for item in report.get("telemetry", []) if isinstance(item, Mapping) and item.get("event_id") == report.get("selected_event_id")), {})
+    evidence = "" if not selected_telemetry else f'<div class="case-evidence"><span class="kicker">SELECTED EVENT DATA · READ ONLY</span><p>{_s(selected_telemetry.get("event_id"))} · {_s(selected_telemetry.get("protocol"))} · {_s(selected_telemetry.get("service"))} · {_s(selected_telemetry.get("state"))}</p><p>DURATION {_s(selected_telemetry.get("duration"))} · BYTES {_s(selected_telemetry.get("source_bytes"))} / {_s(selected_telemetry.get("destination_bytes"))}</p></div>'
+    right = f'<section class="right"><span class="right-title">SELECTED CASE</span><h2 class="stage-name">{selected_title}</h2><div class="progress"><div><b>{"3 / 7" if report.get("selected_event_id") else "0 / 7"}</b><small>STAGES</small></div></div><div class="fact"><label>EVENT</label><b class="mono">{event}</b></div><div class="fact"><label>WORKFLOW</label><b class="mint">{_s(report.get("workflow_state"))}</b></div>{evidence}</section>'
+    return _header("Investigations", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div>{_bottom_action(report, ("investigated",))}</main>' + _footer()
 
 
 def red_html(report: Mapping[str, object]) -> str:
     left = _left("Candidate path", "A simulated adversary route in an isolated graph. It holds no authority and touches no live system.", (("SCENARIO", "Exposed API", ""), ("AGENT", "Red agent · 04A", ""), ("AUTHORITY", "None · simulated", "red"), ("RESULT", "Reachable in the isolated graph", "")))
     center = f'<section class="center red-center">{_box_flow("red")}<span class="hand">HAND TO BLUE AGENT</span></section>'
     right = '<section class="right"><span class="right-title">PATH STEPS</span><div class="path-list"><div><b>01</b><p>External actor</p><small>untrusted origin</small></div><div><b>02</b><p>Public API</p><small>simulated entry point</small></div><div><b>03</b><p>Workload identity</p><small>simulated trust hop</small></div><div><b>04</b><p>Sensitive data store</p><small>protected target</small></div></div></section>'
-    return _header("Red Simulation", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
+    return _header("Red Simulation", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div>{_bottom_action(report, ("red_simulated",))}</main>' + _footer()
 
 
 def blue_html(report: Mapping[str, object]) -> str:
@@ -186,14 +203,14 @@ def blue_html(report: Mapping[str, object]) -> str:
     left = _left("Control proposed", "A defensive control is proposed against the simulated path. A proposal grants nothing; the human gate decides.", (("CONTROL", _s(rec.get("target_control_id"), "ingress_restricted"), "mint mono"), ("TARGET", "Public API · entry point", ""), ("AUTHORITY", "None · proposal only", ""), ("HUMAN GATE", _s(_m(report, "approval").get("decision"), "Approved"), "mint")))
     center = f'<section class="center blue-center">{_box_flow("blue")}</section>'
     right = f'<section class="right"><span class="right-title">CONTROL SPECIFICATION</span><div class="spec"><label>TYPE</label><p>Ingress restriction</p></div><div class="spec"><label>SCOPE</label><p>Public API</p></div><div class="spec"><label>EXECUTION</label><p>Sandbox only</p></div>{_route_link("Verification", "VIEW VERIFICATION")}</section>'
-    return _header("Blue Response", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
+    return _header("Blue Response", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div>{_bottom_action(report, ("blue_recommended",))}</main>' + _footer()
 
 
 def verification_html(report: Mapping[str, object]) -> str:
     left = _left("Path unreachable", "The verifier re-ran the path query after the approved sandbox control. It is independent of the agents that proposed it.", (("RESULT", "Passed · path unreachable", "mint"), ("CONTROL", "ingress_restricted", "mono"), ("VERIFIER", "07 · independent", "")))
     center = '''<section class="center verify-center">''' + _box_flow("verification") + '''</section>'''
     right = f'<section class="right"><span class="right-title">VERIFIER CHECKS</span><div class="checks"><div><b>■</b>Path query re-run after the control</div><div><b>■</b>External actor to sensitive data store: unreachable</div><div><b>■</b>Result recorded as verified state</div></div><div class="fact"><label>VERIFIED STATE</label><b class="mint">Passed</b></div>{_route_link("Audit & Reports", "OPEN IN AUDIT")}</section>'
-    return _header("Verification", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
+    return _header("Verification", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div>{_bottom_action(report, ("verified",))}</main>' + _footer()
 
 
 def audit_html(report: Mapping[str, object]) -> str:

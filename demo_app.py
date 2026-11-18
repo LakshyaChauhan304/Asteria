@@ -30,6 +30,11 @@ def action(label: str, allowed: bool, fn) -> None:
 
 
 def route_action(app: DemoOrchestrator, action_id: str, event_id: str | None = None) -> None:
+    if action_id == "verify_control" and app.state is WorkflowState.BLUE_RECOMMENDED:
+        app.approve_recommendation("demo-operator")
+        app.apply_simulated_remediation()
+        app.verify_remediation()
+        return
     transitions = {
         "initialize": (WorkflowState.CREATED, lambda: app.initialize(training_rows=20_000, event_count=20)),
         "detect": (WorkflowState.MODELS_READY, app.run_detection),
