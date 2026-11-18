@@ -117,19 +117,19 @@ def main() -> None:
     if requested_view in VIEWS:
         st.session_state.active_soc_view = requested_view
     view = st.session_state.get("active_soc_view", "Command Center")
-    nav_column, action_column = st.columns([7, 2])
-    with nav_column:
-        selected_view = st.radio("SOC navigation", VIEWS, horizontal=True, label_visibility="collapsed", key="active_soc_view")
-    with action_column:
-        transition = next_action(app)
-        if transition is not None and st.button(transition[1], use_container_width=True):
-            route_action(app, transition[0])
-            st.rerun()
-    if selected_view != view:
-        st.query_params["view"] = selected_view
-        st.rerun()
-    heights = {"Command Center": 1120, "Detection Engine": 820, "Investigations": 820, "Red Simulation": 970, "Blue Response": 850, "Verification": 990, "Audit & Reports": 780}
-    components.html(screen_html(report, view), height=heights[view], scrolling=True)
+    # The visible console header owns navigation and actions. Its links target
+    # the top-level Streamlit document, where the query-param router above
+    # validates and performs the allowed in-memory transition.
+    heights = {
+        "Command Center": 1040,
+        "Detection Engine": 1000,
+        "Investigations": 1000,
+        "Red Simulation": 1000,
+        "Blue Response": 1000,
+        "Verification": 1000,
+        "Audit & Reports": 1000,
+    }
+    components.html(screen_html(report, view), height=heights[view], scrolling=False)
 
 
 if __name__ == "__main__":
