@@ -14,6 +14,7 @@ from numbers import Integral, Real
 from typing import Any
 
 import pandas as pd
+
 from student2_xgboost_runtime import XGBoostDetectionResult, XGBoostPredictionBatch
 
 _BASELINE_KEYS = (
@@ -57,7 +58,13 @@ class Student2DetectionFacade:
             raise DetectionFacadeError(f"raw_frame is missing event ID column: {event_id_column}")
         event_ids = tuple(raw_frame[event_id_column].tolist())
 
-        baseline_output = self.detection_engine.predict(raw_frame)
+        # Student-1's detection engine is trained on model features only.  The
+        # event identifier is transport metadata, not a model feature; keeping
+        # it out of this call prevents the existing preprocessor from treating
+        # it as a numerical feature.  XGBoost owns its complete preprocessing
+        # pipeline and receives the untouched raw frame below.
+        baseline_frame = raw_frame.drop(columns=[event_id_column])
+        baseline_output = self.detection_engine.predict(baseline_frame)
         xgboost_batch = self.xgboost_runtime.predict(
             raw_frame, event_id_column=event_id_column
         )

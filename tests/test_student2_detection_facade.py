@@ -60,14 +60,19 @@ class FakeXGBoostRuntime:
 
 
 class Student2DetectionFacadeTests(unittest.TestCase):
-    def test_invokes_both_detectors_once_with_the_original_raw_frame(self) -> None:
+    def test_baseline_receives_feature_frame_and_xgboost_receives_original_raw_frame(self) -> None:
         frame = raw_rows()
         engine = FakeDetectionEngine()
         runtime = FakeXGBoostRuntime()
 
         results = Student2DetectionFacade(engine, runtime).predict(frame)
 
-        self.assertIs(engine.frames[0], frame)
+        self.assertEqual(list(engine.frames[0].columns), ["dur", "proto"])
+        self.assertEqual(engine.frames[0].to_dict(orient="list"), {
+            "dur": [0.2, 0.1],
+            "proto": ["udp", "tcp"],
+        })
+        self.assertNotIn("event_id", engine.frames[0].columns)
         self.assertIs(runtime.calls[0][0], frame)
         self.assertEqual(runtime.calls[0][1], "event_id")
         self.assertEqual(len(engine.frames), 1)
