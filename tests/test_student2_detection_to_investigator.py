@@ -18,7 +18,12 @@ from investigator import (
     ObservationClass,
     TrustedObservationContext,
 )
-from security_layer import CapabilityAction, CapabilityPolicy, CapabilityRule, DecisionState
+from security_layer import (
+    CapabilityAction,
+    CapabilityPolicy,
+    CapabilityRule,
+    DecisionState,
+)
 from student2_detection_facade import Student2DetectionFacade
 from student2_detection_to_investigator import (
     DetectionInvestigationIntegrationError,
@@ -43,10 +48,11 @@ def raw_rows() -> pd.DataFrame:
 class FakeEngine:
     def predict(self, frame: pd.DataFrame) -> dict[str, list[float] | list[int]]:
         outputs = {
-            "evt-2": (0, 0.2, 0, 0.1),
-            "evt-1": (1, 0.9, 0, 0.2),
+            0.2: (0, 0.2, 0, 0.1),
+            0.1: (1, 0.9, 0, 0.2),
         }
-        rows = [outputs[event_id] for event_id in frame["event_id"]]
+        self.last_frame = frame.copy()
+        rows = [outputs[duration] for duration in frame["dur"]]
         return {
             "logistic_prediction": [row[0] for row in rows],
             "logistic_probability": [row[1] for row in rows],
@@ -294,13 +300,15 @@ class DetectionToInvestigatorTests(unittest.TestCase):
         original = __import__("investigator").InvestigationRecord.add_model_signal
 
         def fail_second(record: object, signal: ModelSignalProvenance) -> None:
-            if getattr(record, "evidence").event_id == "evt-1":
+            if record.evidence.event_id == "evt-1":
                 raise RuntimeError("simulated later preparation failure")
             original(record, signal)
 
-        with patch("investigator.InvestigationRecord.add_model_signal", new=fail_second):
-            with self.assertRaisesRegex(RuntimeError, "later preparation failure"):
-                adapter.start_investigations(raw_rows(), contexts())
+        with (
+            patch("investigator.InvestigationRecord.add_model_signal", new=fail_second),
+            self.assertRaisesRegex(RuntimeError, "later preparation failure"),
+        ):
+            adapter.start_investigations(raw_rows(), contexts())
         with self.assertRaises(KeyError):
             adapter.investigator.get_investigation("AST-0001")
         with self.assertRaises(KeyError):
