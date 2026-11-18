@@ -56,7 +56,7 @@ class DemoOrchestrator:
         self.audit: RemediationAuditEvent | None = None
         self.verification: VerificationResult | None = None
 
-    def initialize(self, *, training_rows: int = 20_000, event_count: int = 10) -> None:
+    def initialize(self, *, training_rows: int = 20_000, event_count: int = 20) -> None:
         self._require(WorkflowState.CREATED)
         self._bundle = load_demo_data(repository_root=self.repository_root, training_rows=training_rows, event_count=event_count)
         baseline = initialize_baseline_engine(self._bundle)
@@ -146,7 +146,22 @@ class DemoOrchestrator:
         return self.verification
 
     def export_audit_report(self) -> dict[str, object]:
-        report = {"workflow_state": self.state.value, "incident_status": self.incident_status.value, "environment": {"environment_id": self.environment.environment_id, "initial_state": self.environment.initial_state, "current_state": self.environment.current_state, "audit_history": [item.to_dict() for item in self.environment.audit_history]}, "selected_event_id": None if self.selected is None else self.selected.detection.event_id, "investigation": None if self.selected is None else self.selected.investigation.to_dict(), "red_finding": None if self.finding is None else self.finding.to_dict(), "recommendations": [item.to_dict() for item in self.recommendations], "approval": None if self.approval is None else self.approval.to_dict(), "remediation_audit": None if self.audit is None else self.audit.to_dict(), "verification": None if self.verification is None else self.verification.to_dict()}
+        cases = [
+            {
+                "event_id": str(item.detection.event_id),
+                "xgboost_probability": round(item.detection.xgboost_probability, 6),
+                "signal_count": sum(
+                    value == 1
+                    for value in (
+                        item.detection.logistic_prediction,
+                        item.detection.anomaly_prediction,
+                        item.detection.xgboost_prediction,
+                    )
+                ),
+            }
+            for item in self._results
+        ]
+        report = {"workflow_state": self.state.value, "incident_status": self.incident_status.value, "environment": {"environment_id": self.environment.environment_id, "initial_state": self.environment.initial_state, "current_state": self.environment.current_state, "audit_history": [item.to_dict() for item in self.environment.audit_history]}, "telemetry": [] if self._bundle is None else list(self._bundle.telemetry_rows), "detection_cases": cases, "selected_event_id": None if self.selected is None else self.selected.detection.event_id, "investigation": None if self.selected is None else self.selected.investigation.to_dict(), "red_finding": None if self.finding is None else self.finding.to_dict(), "recommendations": [item.to_dict() for item in self.recommendations], "approval": None if self.approval is None else self.approval.to_dict(), "remediation_audit": None if self.audit is None else self.audit.to_dict(), "verification": None if self.verification is None else self.verification.to_dict()}
         json.dumps(report)
         return report
 

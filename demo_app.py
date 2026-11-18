@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from student2_demo_orchestrator import DemoOrchestrator, WorkflowState
 from student2_demo_qa import answer
@@ -30,11 +29,11 @@ def action(label: str, allowed: bool, fn) -> None:
             st.error(f"Simulation action failed safely: {error}")
 
 
-def route_action(app: DemoOrchestrator, action_id: str) -> None:
+def route_action(app: DemoOrchestrator, action_id: str, event_id: str | None = None) -> None:
     transitions = {
-        "initialize": (WorkflowState.CREATED, lambda: app.initialize(training_rows=20_000, event_count=10)),
+        "initialize": (WorkflowState.CREATED, lambda: app.initialize(training_rows=20_000, event_count=20)),
         "detect": (WorkflowState.MODELS_READY, app.run_detection),
-        "investigate": (WorkflowState.DETECTED, app.start_investigation),
+        "investigate": (WorkflowState.DETECTED, lambda: app.start_investigation(event_id)),
         "red": (WorkflowState.INVESTIGATED, lambda: app.run_red_simulation("exposed_api")),
         "blue": (WorkflowState.RED_SIMULATED, app.generate_blue_recommendations),
         "approve": (WorkflowState.BLUE_RECOMMENDED, lambda: app.approve_recommendation("demo-operator")),
@@ -65,7 +64,7 @@ def controls(app: DemoOrchestrator, view: str, report: dict[str, object]) -> Non
     if view in {"Command Center", "Detection Engine", "Investigations"}:
         columns = st.columns(4)
         with columns[0]:
-            action("01  INITIALIZE MODELS", app.state is WorkflowState.CREATED, lambda: app.initialize(training_rows=20_000, event_count=10))
+            action("01  INITIALIZE MODELS", app.state is WorkflowState.CREATED, lambda: app.initialize(training_rows=20_000, event_count=20))
         with columns[1]:
             action("02  RUN DETECTION", app.state is WorkflowState.MODELS_READY, app.run_detection)
         with columns[2]:
@@ -106,7 +105,8 @@ def main() -> None:
     app = workflow()
     requested_action = st.query_params.get("action")
     if isinstance(requested_action, str):
-        route_action(app, requested_action)
+        requested_event = st.query_params.get("event")
+        route_action(app, requested_action, requested_event if isinstance(requested_event, str) else None)
         requested_route = st.query_params.get("view")
         st.query_params.clear()
         if requested_route in VIEWS:
@@ -117,19 +117,13 @@ def main() -> None:
     if requested_view in VIEWS:
         st.session_state.active_soc_view = requested_view
     view = st.session_state.get("active_soc_view", "Command Center")
-    nav_column, action_column = st.columns([7, 2])
-    with nav_column:
-        selected_view = st.radio("SOC navigation", VIEWS, horizontal=True, label_visibility="collapsed", key="active_soc_view")
-    with action_column:
-        transition = next_action(app)
-        if transition is not None and st.button(transition[1], use_container_width=True):
-            route_action(app, transition[0])
-            st.rerun()
-    if selected_view != view:
-        st.query_params["view"] = selected_view
-        st.rerun()
-    heights = {"Command Center": 1120, "Detection Engine": 820, "Investigations": 820, "Red Simulation": 970, "Blue Response": 850, "Verification": 990, "Audit & Reports": 780}
-    components.html(screen_html(report, view), height=heights[view], scrolling=True)
+    # The visible console header owns navigation and actions. Its links target
+    # the top-level Streamlit document, where the query-param router above
+    # validates and performs the allowed in-memory transition.
+    # st.html renders into Streamlit's document rather than an isolated iframe.
+    # That keeps the dashboard responsive and lets its visible links update the
+    # top-level query-param router.
+    st.html(screen_html(report, view))
 
 
 if __name__ == "__main__":

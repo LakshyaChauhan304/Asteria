@@ -28,16 +28,24 @@ CSS = CSS.replace(
 @media(max-width:900px){.red-center .orb,.blue-center .orb{transform:translate(-50%,-50%) scale(.62)}.signal-console{grid-template-columns:1fr;padding-top:35px}}
 </style>""",
 )
+CSS = CSS.replace("</style>", ".top{position:sticky;top:0;z-index:100;background:#060b15eF;backdrop-filter:blur(12px)}.shell{scroll-margin-top:58px}</style>")
 
 CSS = CSS.replace(".nav span{", ".nav span,.nav a{").replace(".nav .on{", ".nav .on{")
 CSS = CSS.replace("</style>", ".top-action{border:1px solid #e8ae2b;color:#e8ae2b;text-decoration:none;padding:8px 11px;font:9px ui-monospace,Consolas,monospace;letter-spacing:1.2px;white-space:nowrap}.top-action:hover{background:#e8ae2b;color:#07101b}</style>")
 CSS = CSS.replace("</style>", ".flow-map{width:100%;margin-top:165px;display:grid;grid-template-columns:1fr 42px 1fr;gap:12px 8px;align-items:center}.flow-card{min-height:135px;border:1px solid #3a495c;background:#09121f;padding:16px;position:relative;cursor:pointer}.flow-card:before{content:'';position:absolute;left:0;top:0;height:3px;width:100%;background:#94a9bd}.flow-card.red:before{background:#ff6873}.flow-card.amber:before{background:#e7ae2c}.flow-card.mint:before{background:#39daba}.flow-card.blue:before{background:#6da9ff}.flow-card label{display:block;color:#a8b7c8;font:10px ui-monospace,Consolas,monospace;letter-spacing:1.5px}.flow-card h2{font:24px Georgia,serif;margin:14px 0 7px}.flow-card p{font:13px Georgia,serif;color:#bcae9e;line-height:1.35;margin:0}.flow-card .state{font:10px ui-monospace,Consolas,monospace;letter-spacing:1px;color:#39daba}.flow-arrow{color:#9fb0bf;text-align:center;font:25px Georgia,serif}.flow-map .wide{grid-column:1/4;min-height:105px}.flow-map .wide:after{content:'';position:absolute;left:50%;top:-25px;height:25px;border-left:1px dashed #405268}.flow-caption{margin-top:23px;border-top:1px solid #243040;padding:15px 0;color:#acbdca;font:11px ui-monospace,Consolas,monospace;letter-spacing:1px}@media(max-width:900px){.flow-map{margin-top:55px}.flow-card h2{font-size:19px}}</style>")
 
+# Desktop sizing belongs to the viewport, not a fixed mockup canvas. These
+# overrides preserve the smaller breakpoints above while using wide monitors.
+CSS = CSS.replace(
+    "</style>",
+    ".shell{min-height:calc(100vh - 56px);padding:clamp(24px,3vh,48px) clamp(28px,4vw,72px) 52px}.layout{grid-template-columns:minmax(280px,.8fr) minmax(680px,2fr) minmax(300px,.9fr);gap:clamp(24px,2vw,46px);min-height:calc(100vh - 156px)}.center{min-height:clamp(620px,calc(100vh - 170px),900px)}.flow-map{margin-top:clamp(52px,8vh,118px)}.blue-center .flow-map,.red-center .flow-map{margin-top:clamp(52px,9vh,128px)}@media(min-width:1600px){.display{font-size:clamp(52px,3.3vw,78px)}.copy{max-width:330px;font-size:clamp(17px,1vw,21px)}.flow-card{min-height:clamp(150px,17vh,220px);padding:clamp(18px,1.2vw,28px)}.flow-card h2{font-size:clamp(24px,1.55vw,34px)}.flow-card p{font-size:clamp(13px,.85vw,17px)}}</style>",
+)
+
 
 def _action_link(report: Mapping[str, object]) -> str:
     state = str(report.get("workflow_state", "created"))
     actions = {
-        "created": ("initialize", "Command Center", "INITIALIZE MODELS"),
+        "created": ("initialize", "Detection Engine", "INITIALIZE MODELS"),
         "models_ready": ("detect", "Detection Engine", "RUN DETECTION"),
         "detected": ("investigate", "Investigations", "START INVESTIGATION"),
         "investigated": ("red", "Red Simulation", "RUN RED SIMULATION"),
@@ -50,6 +58,15 @@ def _action_link(report: Mapping[str, object]) -> str:
     action, view, label = actions.get(state, ("", "Command Center", "VIEW COMMAND"))
     query = f"?view={view.replace(' ', '%20')}" + (f"&action={action}" if action else "")
     return f'<a class="top-action" href="/{query}" target="_top">{label}</a>'
+
+
+def _route_link(view: str, label: str) -> str:
+    query = view.replace(" ", "%20").replace("&", "%26")
+    return f'<a class="button" href="/?view={query}" target="_top">{label}<i>→</i></a>'
+
+
+def _case_link(event_id: str, label: str) -> str:
+    return f'<a class="button" href="/?view=Investigations&action=investigate&event={_s(event_id)}" target="_top">{label}<i>→</i></a>'
 
 
 def _header(active: str, report: Mapping[str, object]) -> str:
@@ -108,12 +125,24 @@ def _left(title: str, copy: str, facts: tuple[tuple[str, str, str], ...]) -> str
     return f'<aside><span class="kicker">{title.upper()}</span><h1 class="display">{title}</h1><p class="copy">{copy}</p><div class="rule"></div>{details}</aside>'
 
 
+def _telemetry_feed(report: Mapping[str, object]) -> str:
+    items = report.get("telemetry")
+    if not isinstance(items, list) or not items:
+        return '<section class="telemetry-feed"><span class="kicker">REAL UNSW-NB15 TELEMETRY · INITIALIZE MODELS TO LOAD 20 RECORDS</span></section>'
+    rows = "".join(
+        f'<tr><td>{_s(item.get("event_id"))}</td><td>{_s(item.get("protocol"))}</td><td>{_s(item.get("service"))}</td><td>{_s(item.get("state"))}</td><td>{_s(item.get("duration"))}</td><td>{_s(item.get("source_bytes"))} / {_s(item.get("destination_bytes"))}</td></tr>'
+        for item in items[:20]
+        if isinstance(item, Mapping)
+    )
+    return f'''<section class="telemetry-feed"><span class="kicker">REAL UNSW-NB15 TELEMETRY · 20 SAMPLED RECORDS · READ ONLY</span><table><thead><tr><th>EVENT</th><th>PROTO</th><th>SERVICE</th><th>STATE</th><th>DURATION</th><th>BYTES S / D</th></tr></thead><tbody>{rows}</tbody></table></section>'''
+
+
 def command_center_html(report: Mapping[str, object]) -> str:
     inv = _m(report, "investigation")
     event = _s(report.get("selected_event_id"), "UNSW-NB15-8318")
     left = _left("AST–0001", "Exposed API path to a sensitive data store, intercepted at ingress.", (("DETECTION EVENT", event, "mono"), ("SIGNALS", "3 independent outputs", ""), ("HUMAN GATE", _s(_m(report, "approval").get("decision"), "Approved"), "mint"), ("VERIFICATION", "Passed · path unreachable", "mint")))
     stages = "".join(f'<span class="{"on" if index == 1 else ""}">{label}</span>' for index, label in enumerate(("01", "02", "03", "04A", "04B", "05", "06", "07"), 1))
-    right = f'''<section class="right"><span class="right-title">STAGE INSPECTOR · READ ONLY</span><div class="selector">{stages}</div><h2 class="stage-name">Telemetry</h2><div class="inspect"><label>INPUT</label><p>Network flow record ingested for scoring. Read only.</p></div><div class="inspect"><label>OUTPUT</label><p>{event}</p></div><div class="inspect"><label>AUTHORITY</label><p>None · data only</p></div><a class="button">OPEN IN AUDIT <i>→</i></a><div class="hyp"><span class="kicker">HYPOTHESIS · UNCONFIRMED</span><br>A detection signal may warrant investigation. It is not proof of compromise and never grants authorization.</div></section>'''
+    right = f'''<section class="right"><span class="right-title">STAGE INSPECTOR · READ ONLY</span><div class="selector">{stages}</div><h2 class="stage-name">Telemetry</h2><div class="inspect"><label>INPUT</label><p>Network flow record ingested for scoring. Read only.</p></div><div class="inspect"><label>OUTPUT</label><p>{event}</p></div><div class="inspect"><label>AUTHORITY</label><p>None · data only</p></div>{_route_link("Audit & Reports", "OPEN IN AUDIT")}<div class="hyp"><span class="kicker">HYPOTHESIS · UNCONFIRMED</span><br>A detection signal may warrant investigation. It is not proof of compromise and never grants authorization.</div></section>'''
     return _header("Command Center", report) + f'<main class="shell"><div class="layout">{left}<section class="center">{_orbital(report)}</section>{right}</div></main>' + _footer()
 
 
@@ -122,17 +151,25 @@ def detection_html(report: Mapping[str, object]) -> str:
     evidence = _m(inv, "evidence")
     score = _s(evidence.get("model_score"), "0.9998386")
     left = _left("Signals, not verdicts", "Three independent outputs are recorded for one event. A signal may warrant investigation; it is not proof of compromise.", (("EVENT", _s(report.get("selected_event_id"), "UNSW-NB15-8318"), "mono"), ("SELECTED MODEL", "XGBoost", ""), ("INDEPENDENT OUTPUTS", "3", "")))
-    center = f'''<section class="center"><div class="signal-console"><article class="signal-card"><label>MODEL 01 · BASELINE</label><h2>Logistic regression</h2><b>DETECTED</b><p>Supervised baseline output retained with source provenance.</p></article><article class="signal-card"><label>MODEL 02 · ANOMALY</label><h2>Isolation forest</h2><b>ANOMALY</b><p>Unsupervised anomaly signal remains independent from other models.</p></article><article class="signal-card"><label>MODEL 03 · SELECTED</label><h2>XGBoost runtime</h2><b>{score}</b><p>Artifact-backed score for {_s(report.get("selected_event_id"), "UNSW-NB15-8318")}.</p></article></div><div class="signal-link"></div><p class="signal-summary">The investigator receives three model signals as recorded facts. It keeps model outputs separate from inferences, hypotheses, authorization, and execution.</p></section>'''
-    right = '''<section class="right"><span class="right-title">EVIDENCE CLASSES</span><div class="eclass"><b>I · FACT</b><p>Each model output remains a recorded detection signal with its own provenance.</p></div><div class="eclass mint"><b>II · INFERENCE</b><p>The investigator may request more read-only context after reviewing the signals.</p></div><div class="eclass red"><b>III · HYPOTHESIS</b><p>Potential compromise stays unconfirmed until independent evidence supports it.</p></div><a class="button">OPEN AST–0001 <i>→</i></a></section>'''
+    center = f'''<section class="center"><div class="signal-console"><article class="signal-card"><label>MODEL 01 · BASELINE</label><h2>Logistic regression</h2><b>DETECTED</b><p>Supervised baseline output retained with source provenance.</p></article><article class="signal-card"><label>MODEL 02 · ANOMALY</label><h2>Isolation forest</h2><b>ANOMALY</b><p>Unsupervised anomaly signal remains independent from other models.</p></article><article class="signal-card"><label>MODEL 03 · SELECTED</label><h2>XGBoost runtime</h2><b>{score}</b><p>Artifact-backed score for {_s(report.get("selected_event_id"), "UNSW-NB15-8318")}.</p></article></div><div class="signal-link"></div><p class="signal-summary">The investigator receives three model signals as recorded facts. It keeps model outputs separate from inferences, hypotheses, authorization, and execution.</p>{_telemetry_feed(report)}</section>'''
+    right = f'''<section class="right"><span class="right-title">EVIDENCE CLASSES</span><div class="eclass"><b>I · FACT</b><p>Each model output remains a recorded detection signal with its own provenance.</p></div><div class="eclass mint"><b>II · INFERENCE</b><p>The investigator may request more read-only context after reviewing the signals.</p></div><div class="eclass red"><b>III · HYPOTHESIS</b><p>Potential compromise stays unconfirmed until independent evidence supports it.</p></div>{_route_link("Investigations", "OPEN AST–0001")}</section>'''
     return _header("Detection Engine", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
 
 
 def investigations_html(report: Mapping[str, object]) -> str:
     event = _s(report.get("selected_event_id"), "UNSW-NB15-8318")
-    left = _left("Case queue", "Every investigation traces from a model signal to an independently verified, simulated response.", (("OPEN", "[N]", ""), ("VERIFIED", "1", "mint"), ("FILTER", "ALL   OPEN   VERIFIED", "mono")))
+    cases = report.get("detection_cases")
+    case_items = cases if isinstance(cases, list) else []
+    left = _left("Case queue", "Twenty real UNSW-NB15 records become individually selectable investigation cases after detection.", (("LOADED", str(len(case_items)), "mint"), ("SELECTED", event, "mono"), ("FILTER", "ALL   SIGNALS   REVIEW", "mono")))
     stages = ''.join(f'<span>{item}</span>' for item in ("01", "02", "03", "04A", "04B", "05", "06", "07"))
-    center = f'''<section class="center queue"><span class="kicker">CASE QUEUE · RECORDED RUN · 1 INVESTIGATION</span><article class="case"><div><h2>AST–0001</h2><p>Exposed API path to a sensitive data store</p><div class="mini-stages">{stages}</div></div><div><label class="kicker">EVENT</label><b>{event}</b></div><div><label class="kicker">STATUS</label><p class="verified">Verified</p></div></article><article class="case empty"><div><h2>[NEXT CASE ID]</h2><p>[Investigation title]</p><div class="mini-stages">{stages}</div></div><div>EVENT<br>[EVENT ID]</div><div>STATUS<br>—</div></article><article class="case empty"><div><h2>[NEXT CASE ID]</h2><p>[Investigation title]</p><div class="mini-stages">{stages}</div></div><div>EVENT<br>[EVENT ID]</div><div>STATUS<br>—</div></article></section>'''
-    right = '<section class="right"><span class="right-title">SELECTED CASE</span><h2 class="stage-name">AST–0001</h2><div class="progress"><div><b>7 / 7</b><small>STAGES</small></div></div><div class="fact"><label>HUMAN GATE</label><b class="mint">Approved</b></div><div class="fact"><label>VERIFICATION</label><b class="mint">Passed · path unreachable</b></div><a class="button">OPEN CASE <i>→</i></a></section>'
+    queue_rows = "".join(
+        f'<article class="case"><div><h2>AST–{index:04d}</h2><p>UNSW-NB15 detection record · {item.get("signal_count", 0)} model signals</p><div class="mini-stages">{stages}</div></div><div><label class="kicker">EVENT</label><b>{_s(item.get("event_id"))}</b></div><div><label class="kicker">XGBOOST</label><p class="verified">{_s(item.get("xgboost_probability"))}</p>{_case_link(str(item.get("event_id")), "SELECT CASE")}</div></article>'
+        for index, item in enumerate(case_items, 1)
+        if isinstance(item, Mapping)
+    ) or '<article class="case empty"><div><h2>NO DETECTION RECORDS YET</h2><p>Run detection to create the 20-case queue.</p></div></article>'
+    center = f'''<section class="center queue"><span class="kicker">CASE QUEUE · REAL UNSW-NB15 RUN · {len(case_items)} RECORDS</span>{queue_rows}</section>'''
+    selected_title = "AST–0001" if report.get("selected_event_id") else "SELECT A CASE"
+    right = f'<section class="right"><span class="right-title">SELECTED CASE</span><h2 class="stage-name">{selected_title}</h2><div class="progress"><div><b>{"7 / 7" if report.get("selected_event_id") else "0 / 7"}</b><small>STAGES</small></div></div><div class="fact"><label>EVENT</label><b class="mono">{event}</b></div><div class="fact"><label>WORKFLOW</label><b class="mint">{_s(report.get("workflow_state"))}</b></div>{_route_link("Audit & Reports", "OPEN CASE")}</section>'
     return _header("Investigations", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
 
 
@@ -148,14 +185,14 @@ def blue_html(report: Mapping[str, object]) -> str:
     rec = items[0] if isinstance(items, list) and items and isinstance(items[0], Mapping) else {}
     left = _left("Control proposed", "A defensive control is proposed against the simulated path. A proposal grants nothing; the human gate decides.", (("CONTROL", _s(rec.get("target_control_id"), "ingress_restricted"), "mint mono"), ("TARGET", "Public API · entry point", ""), ("AUTHORITY", "None · proposal only", ""), ("HUMAN GATE", _s(_m(report, "approval").get("decision"), "Approved"), "mint")))
     center = f'<section class="center blue-center">{_box_flow("blue")}</section>'
-    right = '<section class="right"><span class="right-title">CONTROL SPECIFICATION</span><div class="spec"><label>TYPE</label><p>Ingress restriction</p></div><div class="spec"><label>SCOPE</label><p>Public API</p></div><div class="spec"><label>EXECUTION</label><p>Sandbox only</p></div><a class="button">VIEW VERIFICATION <i>→</i></a></section>'
+    right = f'<section class="right"><span class="right-title">CONTROL SPECIFICATION</span><div class="spec"><label>TYPE</label><p>Ingress restriction</p></div><div class="spec"><label>SCOPE</label><p>Public API</p></div><div class="spec"><label>EXECUTION</label><p>Sandbox only</p></div>{_route_link("Verification", "VIEW VERIFICATION")}</section>'
     return _header("Blue Response", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
 
 
 def verification_html(report: Mapping[str, object]) -> str:
     left = _left("Path unreachable", "The verifier re-ran the path query after the approved sandbox control. It is independent of the agents that proposed it.", (("RESULT", "Passed · path unreachable", "mint"), ("CONTROL", "ingress_restricted", "mono"), ("VERIFIER", "07 · independent", "")))
     center = '''<section class="center verify-center">''' + _box_flow("verification") + '''</section>'''
-    right = '<section class="right"><span class="right-title">VERIFIER CHECKS</span><div class="checks"><div><b>■</b>Path query re-run after the control</div><div><b>■</b>External actor to sensitive data store: unreachable</div><div><b>■</b>Result recorded as verified state</div></div><div class="fact"><label>VERIFIED STATE</label><b class="mint">Passed</b></div><a class="button">OPEN IN AUDIT <i>→</i></a></section>'
+    right = f'<section class="right"><span class="right-title">VERIFIER CHECKS</span><div class="checks"><div><b>■</b>Path query re-run after the control</div><div><b>■</b>External actor to sensitive data store: unreachable</div><div><b>■</b>Result recorded as verified state</div></div><div class="fact"><label>VERIFIED STATE</label><b class="mint">Passed</b></div>{_route_link("Audit & Reports", "OPEN IN AUDIT")}</section>'
     return _header("Verification", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
 
 
