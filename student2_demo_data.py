@@ -36,6 +36,7 @@ class DemoDataBundle:
     training_labels: pd.Series
     inference_frame: pd.DataFrame
     ground_truth: pd.DataFrame
+    telemetry_rows: tuple[dict[str, object], ...]
     metadata: XGBoostModelMetadata
     training_row_count: int
     dataset_training_row_count: int
@@ -95,12 +96,28 @@ def load_demo_data(
     inference_frame.insert(0, "event_id", event_ids.tolist())
     ground_truth = selected.loc[:, [_ID_COLUMN, _LABEL_COLUMN, _ATTACK_CATEGORY_COLUMN]].copy()
     ground_truth.insert(0, "event_id", event_ids.tolist())
+    telemetry_columns = ("event_id", "proto", "service", "state", "dur", "sbytes", "dbytes")
+    telemetry_frame = selected.loc[:, ["proto", "service", "state", "dur", "sbytes", "dbytes"]].copy()
+    telemetry_frame.insert(0, "event_id", event_ids.tolist())
+    telemetry_rows = tuple(
+        {
+            "event_id": str(row.event_id),
+            "protocol": str(row.proto),
+            "service": str(row.service),
+            "state": str(row.state),
+            "duration": f"{float(row.dur):.6f}",
+            "source_bytes": int(row.sbytes),
+            "destination_bytes": int(row.dbytes),
+        }
+        for row in telemetry_frame.loc[:, telemetry_columns].itertuples(index=False)
+    )
 
     return DemoDataBundle(
         training_features=training_features,
         training_labels=training_labels,
         inference_frame=inference_frame,
         ground_truth=ground_truth,
+        telemetry_rows=telemetry_rows,
         metadata=metadata,
         training_row_count=len(training_features),
         dataset_training_row_count=len(training),

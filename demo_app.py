@@ -31,7 +31,7 @@ def action(label: str, allowed: bool, fn) -> None:
 
 def route_action(app: DemoOrchestrator, action_id: str) -> None:
     transitions = {
-        "initialize": (WorkflowState.CREATED, lambda: app.initialize(training_rows=20_000, event_count=10)),
+        "initialize": (WorkflowState.CREATED, lambda: app.initialize(training_rows=20_000, event_count=20)),
         "detect": (WorkflowState.MODELS_READY, app.run_detection),
         "investigate": (WorkflowState.DETECTED, app.start_investigation),
         "red": (WorkflowState.INVESTIGATED, lambda: app.run_red_simulation("exposed_api")),
@@ -64,7 +64,7 @@ def controls(app: DemoOrchestrator, view: str, report: dict[str, object]) -> Non
     if view in {"Command Center", "Detection Engine", "Investigations"}:
         columns = st.columns(4)
         with columns[0]:
-            action("01  INITIALIZE MODELS", app.state is WorkflowState.CREATED, lambda: app.initialize(training_rows=20_000, event_count=10))
+            action("01  INITIALIZE MODELS", app.state is WorkflowState.CREATED, lambda: app.initialize(training_rows=20_000, event_count=20))
         with columns[1]:
             action("02  RUN DETECTION", app.state is WorkflowState.MODELS_READY, app.run_detection)
         with columns[2]:

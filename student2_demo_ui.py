@@ -113,6 +113,18 @@ def _left(title: str, copy: str, facts: tuple[tuple[str, str, str], ...]) -> str
     return f'<aside><span class="kicker">{title.upper()}</span><h1 class="display">{title}</h1><p class="copy">{copy}</p><div class="rule"></div>{details}</aside>'
 
 
+def _telemetry_feed(report: Mapping[str, object]) -> str:
+    items = report.get("telemetry")
+    if not isinstance(items, list) or not items:
+        return '<section class="telemetry-feed"><span class="kicker">REAL UNSW-NB15 TELEMETRY · INITIALIZE MODELS TO LOAD 20 RECORDS</span></section>'
+    rows = "".join(
+        f'<tr><td>{_s(item.get("event_id"))}</td><td>{_s(item.get("protocol"))}</td><td>{_s(item.get("service"))}</td><td>{_s(item.get("state"))}</td><td>{_s(item.get("duration"))}</td><td>{_s(item.get("source_bytes"))} / {_s(item.get("destination_bytes"))}</td></tr>'
+        for item in items[:20]
+        if isinstance(item, Mapping)
+    )
+    return f'''<section class="telemetry-feed"><span class="kicker">REAL UNSW-NB15 TELEMETRY · 20 SAMPLED RECORDS · READ ONLY</span><table><thead><tr><th>EVENT</th><th>PROTO</th><th>SERVICE</th><th>STATE</th><th>DURATION</th><th>BYTES S / D</th></tr></thead><tbody>{rows}</tbody></table></section>'''
+
+
 def command_center_html(report: Mapping[str, object]) -> str:
     inv = _m(report, "investigation")
     event = _s(report.get("selected_event_id"), "UNSW-NB15-8318")
@@ -127,7 +139,7 @@ def detection_html(report: Mapping[str, object]) -> str:
     evidence = _m(inv, "evidence")
     score = _s(evidence.get("model_score"), "0.9998386")
     left = _left("Signals, not verdicts", "Three independent outputs are recorded for one event. A signal may warrant investigation; it is not proof of compromise.", (("EVENT", _s(report.get("selected_event_id"), "UNSW-NB15-8318"), "mono"), ("SELECTED MODEL", "XGBoost", ""), ("INDEPENDENT OUTPUTS", "3", "")))
-    center = f'''<section class="center"><div class="signal-console"><article class="signal-card"><label>MODEL 01 · BASELINE</label><h2>Logistic regression</h2><b>DETECTED</b><p>Supervised baseline output retained with source provenance.</p></article><article class="signal-card"><label>MODEL 02 · ANOMALY</label><h2>Isolation forest</h2><b>ANOMALY</b><p>Unsupervised anomaly signal remains independent from other models.</p></article><article class="signal-card"><label>MODEL 03 · SELECTED</label><h2>XGBoost runtime</h2><b>{score}</b><p>Artifact-backed score for {_s(report.get("selected_event_id"), "UNSW-NB15-8318")}.</p></article></div><div class="signal-link"></div><p class="signal-summary">The investigator receives three model signals as recorded facts. It keeps model outputs separate from inferences, hypotheses, authorization, and execution.</p></section>'''
+    center = f'''<section class="center"><div class="signal-console"><article class="signal-card"><label>MODEL 01 · BASELINE</label><h2>Logistic regression</h2><b>DETECTED</b><p>Supervised baseline output retained with source provenance.</p></article><article class="signal-card"><label>MODEL 02 · ANOMALY</label><h2>Isolation forest</h2><b>ANOMALY</b><p>Unsupervised anomaly signal remains independent from other models.</p></article><article class="signal-card"><label>MODEL 03 · SELECTED</label><h2>XGBoost runtime</h2><b>{score}</b><p>Artifact-backed score for {_s(report.get("selected_event_id"), "UNSW-NB15-8318")}.</p></article></div><div class="signal-link"></div><p class="signal-summary">The investigator receives three model signals as recorded facts. It keeps model outputs separate from inferences, hypotheses, authorization, and execution.</p>{_telemetry_feed(report)}</section>'''
     right = f'''<section class="right"><span class="right-title">EVIDENCE CLASSES</span><div class="eclass"><b>I · FACT</b><p>Each model output remains a recorded detection signal with its own provenance.</p></div><div class="eclass mint"><b>II · INFERENCE</b><p>The investigator may request more read-only context after reviewing the signals.</p></div><div class="eclass red"><b>III · HYPOTHESIS</b><p>Potential compromise stays unconfirmed until independent evidence supports it.</p></div>{_route_link("Investigations", "OPEN AST–0001")}</section>'''
     return _header("Detection Engine", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
 
