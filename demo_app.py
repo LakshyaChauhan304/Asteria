@@ -29,11 +29,11 @@ def action(label: str, allowed: bool, fn) -> None:
             st.error(f"Simulation action failed safely: {error}")
 
 
-def route_action(app: DemoOrchestrator, action_id: str) -> None:
+def route_action(app: DemoOrchestrator, action_id: str, event_id: str | None = None) -> None:
     transitions = {
         "initialize": (WorkflowState.CREATED, lambda: app.initialize(training_rows=20_000, event_count=20)),
         "detect": (WorkflowState.MODELS_READY, app.run_detection),
-        "investigate": (WorkflowState.DETECTED, app.start_investigation),
+        "investigate": (WorkflowState.DETECTED, lambda: app.start_investigation(event_id)),
         "red": (WorkflowState.INVESTIGATED, lambda: app.run_red_simulation("exposed_api")),
         "blue": (WorkflowState.RED_SIMULATED, app.generate_blue_recommendations),
         "approve": (WorkflowState.BLUE_RECOMMENDED, lambda: app.approve_recommendation("demo-operator")),
@@ -105,7 +105,8 @@ def main() -> None:
     app = workflow()
     requested_action = st.query_params.get("action")
     if isinstance(requested_action, str):
-        route_action(app, requested_action)
+        requested_event = st.query_params.get("event")
+        route_action(app, requested_action, requested_event if isinstance(requested_event, str) else None)
         requested_route = st.query_params.get("view")
         st.query_params.clear()
         if requested_route in VIEWS:

@@ -28,6 +28,7 @@ CSS = CSS.replace(
 @media(max-width:900px){.red-center .orb,.blue-center .orb{transform:translate(-50%,-50%) scale(.62)}.signal-console{grid-template-columns:1fr;padding-top:35px}}
 </style>""",
 )
+CSS = CSS.replace("</style>", ".top{position:sticky;top:0;z-index:100;background:#060b15eF;backdrop-filter:blur(12px)}.shell{scroll-margin-top:58px}</style>")
 
 CSS = CSS.replace(".nav span{", ".nav span,.nav a{").replace(".nav .on{", ".nav .on{")
 CSS = CSS.replace("</style>", ".top-action{border:1px solid #e8ae2b;color:#e8ae2b;text-decoration:none;padding:8px 11px;font:9px ui-monospace,Consolas,monospace;letter-spacing:1.2px;white-space:nowrap}.top-action:hover{background:#e8ae2b;color:#07101b}</style>")
@@ -44,7 +45,7 @@ CSS = CSS.replace(
 def _action_link(report: Mapping[str, object]) -> str:
     state = str(report.get("workflow_state", "created"))
     actions = {
-        "created": ("initialize", "Command Center", "INITIALIZE MODELS"),
+        "created": ("initialize", "Detection Engine", "INITIALIZE MODELS"),
         "models_ready": ("detect", "Detection Engine", "RUN DETECTION"),
         "detected": ("investigate", "Investigations", "START INVESTIGATION"),
         "investigated": ("red", "Red Simulation", "RUN RED SIMULATION"),
@@ -62,6 +63,10 @@ def _action_link(report: Mapping[str, object]) -> str:
 def _route_link(view: str, label: str) -> str:
     query = view.replace(" ", "%20").replace("&", "%26")
     return f'<a class="button" href="/?view={query}" target="_top">{label}<i>→</i></a>'
+
+
+def _case_link(event_id: str, label: str) -> str:
+    return f'<a class="button" href="/?view=Investigations&action=investigate&event={_s(event_id)}" target="_top">{label}<i>→</i></a>'
 
 
 def _header(active: str, report: Mapping[str, object]) -> str:
@@ -153,10 +158,18 @@ def detection_html(report: Mapping[str, object]) -> str:
 
 def investigations_html(report: Mapping[str, object]) -> str:
     event = _s(report.get("selected_event_id"), "UNSW-NB15-8318")
-    left = _left("Case queue", "Every investigation traces from a model signal to an independently verified, simulated response.", (("OPEN", "[N]", ""), ("VERIFIED", "1", "mint"), ("FILTER", "ALL   OPEN   VERIFIED", "mono")))
+    cases = report.get("detection_cases")
+    case_items = cases if isinstance(cases, list) else []
+    left = _left("Case queue", "Twenty real UNSW-NB15 records become individually selectable investigation cases after detection.", (("LOADED", str(len(case_items)), "mint"), ("SELECTED", event, "mono"), ("FILTER", "ALL   SIGNALS   REVIEW", "mono")))
     stages = ''.join(f'<span>{item}</span>' for item in ("01", "02", "03", "04A", "04B", "05", "06", "07"))
-    center = f'''<section class="center queue"><span class="kicker">CASE QUEUE · RECORDED RUN · 1 INVESTIGATION</span><article class="case"><div><h2>AST–0001</h2><p>Exposed API path to a sensitive data store</p><div class="mini-stages">{stages}</div></div><div><label class="kicker">EVENT</label><b>{event}</b></div><div><label class="kicker">STATUS</label><p class="verified">Verified</p></div></article><article class="case empty"><div><h2>[NEXT CASE ID]</h2><p>[Investigation title]</p><div class="mini-stages">{stages}</div></div><div>EVENT<br>[EVENT ID]</div><div>STATUS<br>—</div></article><article class="case empty"><div><h2>[NEXT CASE ID]</h2><p>[Investigation title]</p><div class="mini-stages">{stages}</div></div><div>EVENT<br>[EVENT ID]</div><div>STATUS<br>—</div></article></section>'''
-    right = f'<section class="right"><span class="right-title">SELECTED CASE</span><h2 class="stage-name">AST–0001</h2><div class="progress"><div><b>7 / 7</b><small>STAGES</small></div></div><div class="fact"><label>HUMAN GATE</label><b class="mint">Approved</b></div><div class="fact"><label>VERIFICATION</label><b class="mint">Passed · path unreachable</b></div>{_route_link("Audit & Reports", "OPEN CASE")}</section>'
+    queue_rows = "".join(
+        f'<article class="case"><div><h2>AST–{index:04d}</h2><p>UNSW-NB15 detection record · {item.get("signal_count", 0)} model signals</p><div class="mini-stages">{stages}</div></div><div><label class="kicker">EVENT</label><b>{_s(item.get("event_id"))}</b></div><div><label class="kicker">XGBOOST</label><p class="verified">{_s(item.get("xgboost_probability"))}</p>{_case_link(str(item.get("event_id")), "SELECT CASE")}</div></article>'
+        for index, item in enumerate(case_items, 1)
+        if isinstance(item, Mapping)
+    ) or '<article class="case empty"><div><h2>NO DETECTION RECORDS YET</h2><p>Run detection to create the 20-case queue.</p></div></article>'
+    center = f'''<section class="center queue"><span class="kicker">CASE QUEUE · REAL UNSW-NB15 RUN · {len(case_items)} RECORDS</span>{queue_rows}</section>'''
+    selected_title = "AST–0001" if report.get("selected_event_id") else "SELECT A CASE"
+    right = f'<section class="right"><span class="right-title">SELECTED CASE</span><h2 class="stage-name">{selected_title}</h2><div class="progress"><div><b>{"7 / 7" if report.get("selected_event_id") else "0 / 7"}</b><small>STAGES</small></div></div><div class="fact"><label>EVENT</label><b class="mono">{event}</b></div><div class="fact"><label>WORKFLOW</label><b class="mint">{_s(report.get("workflow_state"))}</b></div>{_route_link("Audit & Reports", "OPEN CASE")}</section>'
     return _header("Investigations", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
 
 
