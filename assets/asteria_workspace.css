@@ -1,0 +1,124 @@
+:root {
+    --asteria-rail: 64px;
+    --asteria-background: #060b15;
+    --asteria-panel: #0b1422;
+    --asteria-line: #263243;
+    --asteria-gold: #edb535;
+}
+
+.stApp {
+    color-scheme: dark;
+    background: radial-gradient(ellipse at top right, #122831 0, transparent 55%),
+                var(--asteria-background);
+}
+
+[data-testid="stHeader"], [data-testid="stSidebar"] {
+    display: none;
+}
+
+.stApp :is(.block-container, [data-testid="stMainBlockContainer"],
+          [data-testid="stAppViewBlockContainer"]) {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: none;
+    padding: calc(var(--asteria-rail) + 20px) clamp(16px, 2.5vw, 48px) 32px;
+}
+
+.stApp :is(.element-container, [data-testid="stElementContainer"]):has([data-asteria-style]) {
+    display: none;
+}
+
+.stApp h1 {
+    padding-block: 0 0.4rem;
+}
+
+.stApp [data-testid="stVerticalBlock"]:has(
+    > :is(.element-container, [data-testid="stElementContainer"]) [data-asteria-brand]
+) {
+    position: fixed;
+    inset: 0 0 auto;
+    z-index: 100;
+    display: grid;
+    grid-template-columns: minmax(0, 136px) minmax(0, 1fr);
+    align-items: center;
+    gap: 24px;
+    width: auto;
+    height: var(--asteria-rail);
+    box-sizing: border-box;
+    padding: 0 clamp(16px, 2.5vw, 48px);
+    background: #080f1c;
+    border-bottom: 1px solid var(--asteria-line);
+}
+
+.stApp [data-testid="stVerticalBlock"]:has(
+    > :is(.element-container, [data-testid="stElementContainer"]) [data-asteria-brand]
+) > div {
+    width: 100% !important;
+    min-width: 0;
+}
+
+[data-asteria-brand] {
+    color: #eef3fb;
+    font: 26px Georgia, serif;
+    white-space: nowrap;
+}
+
+[data-asteria-brand] span {
+    color: var(--asteria-gold);
+    margin-inline-end: 7px;
+}
+
+.stApp [data-testid="stRadio"] [role="radiogroup"] {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 5px;
+    overflow-x: auto;
+    margin: 0;
+}
+
+.stApp [data-testid="stRadio"] label {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    margin: 0;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.stApp [data-testid="stRadio"] label:has(input:checked) {
+    border-color: #987022;
+    background: #292116;
+}
+
+.asteria-graph {
+    display: flex;
+    align-items: stretch;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding-block: 10px;
+}
+
+.asteria-graph article {
+    flex: 1 1 145px;
+    padding: 18px;
+    border: 1px solid var(--asteria-line);
+    border-top: 3px solid var(--asteria-gold);
+    background: var(--asteria-panel);
+}
+
+.asteria-graph .connector {
+    align-self: center;
+    color: var(--asteria-gold);
+}
+
+@media (max-width: 1040px) {
+    :root { --asteria-rail: 104px; }
+    .stApp [data-testid="stVerticalBlock"]:has(
+        > :is(.element-container, [data-testid="stElementContainer"]) [data-asteria-brand]
+    ) {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto auto;
+        align-content: center;
+        gap: 6px;
+    }
+}

@@ -8,14 +8,30 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 
-from investigator import Investigator, READ_ONLY_INVESTIGATION_TOOL, TrustedObservationContext
+from investigator import (
+    READ_ONLY_INVESTIGATION_TOOL,
+    Investigator,
+    TrustedObservationContext,
+)
 from security_layer import CapabilityAction, CapabilityPolicy, CapabilityRule
 from student2_blue_agent import BlueAgent, DefensiveRecommendation
-from student2_demo_data import DemoDataBundle, initialize_baseline_engine, load_demo_data
-from student2_demo_environment import ApprovalDecision, ApprovalEvent, DemoEnvironment, RemediationAuditEvent
+from student2_demo_data import (
+    DemoDataBundle,
+    initialize_baseline_engine,
+    load_demo_data,
+)
+from student2_demo_environment import (
+    ApprovalDecision,
+    ApprovalEvent,
+    DemoEnvironment,
+    RemediationAuditEvent,
+)
 from student2_demo_verifier import DemoVerifier, VerificationResult, VerificationStatus
 from student2_detection_facade import Student2DetectionFacade
-from student2_detection_to_investigator import DetectionInvestigationResult, Student2DetectionToInvestigator
+from student2_detection_to_investigator import (
+    DetectionInvestigationResult,
+    Student2DetectionToInvestigator,
+)
 from student2_red_agent import RedAgent, RedAgentFinding, scenario_definition
 from student2_xgboost_runtime import XGBoostRuntime
 
@@ -58,12 +74,13 @@ class DemoOrchestrator:
 
     def initialize(self, *, training_rows: int = 20_000, event_count: int = 20) -> None:
         self._require(WorkflowState.CREATED)
-        self._bundle = load_demo_data(repository_root=self.repository_root, training_rows=training_rows, event_count=event_count)
-        baseline = initialize_baseline_engine(self._bundle)
+        bundle = load_demo_data(repository_root=self.repository_root, training_rows=training_rows, event_count=event_count)
+        baseline = initialize_baseline_engine(bundle)
         runtime = XGBoostRuntime.load(repository_root=self.repository_root)
-        contexts = tuple(TrustedObservationContext("demo-investigator", "demo-security-service", f"events/{event_id}") for event_id in self._bundle.event_ids)
+        contexts = tuple(TrustedObservationContext("demo-investigator", "demo-security-service", f"events/{event_id}") for event_id in bundle.event_ids)
         rules = tuple(CapabilityRule(context.agent_id, context.identity, READ_ONLY_INVESTIGATION_TOOL, CapabilityAction.READ, context.resource) for context in contexts)
         self._adapter = Student2DetectionToInvestigator(Student2DetectionFacade(baseline.engine, runtime), Investigator(CapabilityPolicy(rules)))
+        self._bundle = bundle
         self.state = WorkflowState.MODELS_READY
 
     def run_detection(self) -> tuple[DetectionInvestigationResult, ...]:
@@ -85,6 +102,16 @@ class DemoOrchestrator:
         self.selected = selected
         self.state = WorkflowState.INVESTIGATED
         return selected
+
+    def open_case(self, event_id: str) -> DemoOrchestrator:
+        """Open one event in an independent demo environment."""
+        self._require(WorkflowState.DETECTED)
+        case = DemoOrchestrator(self.repository_root)
+        case._bundle = self._bundle
+        case._results = self._results
+        case.state = WorkflowState.DETECTED
+        case.start_investigation(event_id)
+        return case
 
     def run_red_simulation(self, scenario_id: str) -> RedAgentFinding:
         self._require(WorkflowState.INVESTIGATED)
@@ -149,7 +176,12 @@ class DemoOrchestrator:
         cases = [
             {
                 "event_id": str(item.detection.event_id),
-                "xgboost_probability": round(item.detection.xgboost_probability, 6),
+                "logistic_prediction": item.detection.logistic_prediction,
+                "logistic_probability": item.detection.logistic_score,
+                "isolation_prediction": item.detection.anomaly_prediction,
+                "isolation_score": item.detection.anomaly_score,
+                "xgboost_prediction": item.detection.xgboost_prediction,
+                "xgboost_probability": item.detection.xgboost_probability,
                 "signal_count": sum(
                     value == 1
                     for value in (

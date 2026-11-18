@@ -1,134 +1,271 @@
-"""Asteria's presentation demo, backed only by the isolated DemoOrchestrator."""
+"""The Asteria demo workspace and its session-scoped controls."""
+
 from __future__ import annotations
 
 import json
+from html import escape
 from pathlib import Path
 
 import streamlit as st
 
 from student2_demo_orchestrator import DemoOrchestrator, WorkflowState
 from student2_demo_qa import answer
-from student2_demo_ui import screen_html
 
 ROOT = Path(__file__).resolve().parent
-VIEWS = ("Command Center", "Detection Engine", "Investigations", "Red Simulation", "Blue Response", "Verification", "Audit & Reports")
+VIEWS = (
+    "Home", "Detection", "Investigations", "Red Simulation",
+    "Blue Response", "Verification", "Audit & Reports",
+)
+STEPS = {
+    WorkflowState.INVESTIGATED: ("Generate simulated path", "red"),
+    WorkflowState.RED_SIMULATED: ("Prepare defensive proposal", "blue"),
+    WorkflowState.BLUE_RECOMMENDED: ("Approve simulated control", "approve"),
+    WorkflowState.AWAITING_APPROVAL: ("Apply approved sandbox control", "apply"),
+    WorkflowState.REMEDIATION_IN_PROGRESS: ("Run independent verifier", "verify"),
+}
 
 
-def workflow() -> DemoOrchestrator:
-    if "workflow" not in st.session_state:
-        st.session_state.workflow = DemoOrchestrator(ROOT)
-    return st.session_state.workflow
-
-
-def action(label: str, allowed: bool, fn) -> None:
-    if st.button(label, disabled=not allowed, use_container_width=True):
-        try:
-            fn()
-            st.rerun()
-        except (PermissionError, RuntimeError, TypeError, ValueError) as error:
-            st.error(f"Simulation action failed safely: {error}")
-
-
-def route_action(app: DemoOrchestrator, action_id: str, event_id: str | None = None) -> None:
-    if action_id == "verify_control" and app.state is WorkflowState.BLUE_RECOMMENDED:
-        app.approve_recommendation("demo-operator")
-        app.apply_simulated_remediation()
-        app.verify_remediation()
+def perform(operation, *args, destination=None):
+    """Run a native widget callback and keep failures visible on the same page."""
+    st.session_state.pop("demo_error", None)
+    try:
+        operation(*args)
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as error:
+        st.session_state.demo_error = f"{type(error).__name__}: {error}"
         return
-    transitions = {
-        "initialize": (WorkflowState.CREATED, lambda: app.initialize(training_rows=20_000, event_count=20)),
-        "detect": (WorkflowState.MODELS_READY, app.run_detection),
-        "investigate": (WorkflowState.DETECTED, lambda: app.start_investigation(event_id)),
-        "red": (WorkflowState.INVESTIGATED, lambda: app.run_red_simulation("exposed_api")),
-        "blue": (WorkflowState.RED_SIMULATED, app.generate_blue_recommendations),
-        "approve": (WorkflowState.BLUE_RECOMMENDED, lambda: app.approve_recommendation("demo-operator")),
-        "apply": (WorkflowState.AWAITING_APPROVAL, app.apply_simulated_remediation),
-        "verify": (WorkflowState.REMEDIATION_IN_PROGRESS, app.verify_remediation),
-    }
-    transition = transitions.get(action_id)
-    if transition is not None and app.state is transition[0]:
-        transition[1]()
+    if destination:
+        st.session_state.demo_view = destination
 
 
-def next_action(app: DemoOrchestrator) -> tuple[str, str] | None:
-    actions = {
-        WorkflowState.CREATED: ("initialize", "INITIALIZE MODELS"),
-        WorkflowState.MODELS_READY: ("detect", "RUN DETECTION"),
-        WorkflowState.DETECTED: ("investigate", "START INVESTIGATION"),
-        WorkflowState.INVESTIGATED: ("red", "RUN RED SIMULATION"),
-        WorkflowState.RED_SIMULATED: ("blue", "GENERATE BLUE PROPOSAL"),
-        WorkflowState.BLUE_RECOMMENDED: ("approve", "APPROVE SANDBOX CONTROL"),
-        WorkflowState.AWAITING_APPROVAL: ("apply", "APPLY SIMULATION"),
-        WorkflowState.REMEDIATION_IN_PROGRESS: ("verify", "RUN VERIFIER"),
-    }
-    return actions.get(app.state)
+def open_case(batch, event_id):
+    cases = st.session_state.demo_cases
+    if event_id not in cases:
+        cases[event_id] = batch.open_case(event_id)
+    st.session_state.demo_event = event_id
 
 
-def controls(app: DemoOrchestrator, view: str, report: dict[str, object]) -> None:
-    st.markdown("<div class='control-label'>DEMO CONTROL PLANE · ACTIONS REMAIN IN THE ISOLATED IN-MEMORY ENVIRONMENT</div>", unsafe_allow_html=True)
-    if view in {"Command Center", "Detection Engine", "Investigations"}:
-        columns = st.columns(4)
-        with columns[0]:
-            action("01  INITIALIZE MODELS", app.state is WorkflowState.CREATED, lambda: app.initialize(training_rows=20_000, event_count=20))
-        with columns[1]:
-            action("02  RUN DETECTION", app.state is WorkflowState.MODELS_READY, app.run_detection)
-        with columns[2]:
-            action("03  START INVESTIGATION", app.state is WorkflowState.DETECTED, app.start_investigation)
-        with columns[3]:
-            action("04  RUN RED SIMULATION", app.state is WorkflowState.INVESTIGATED, lambda: app.run_red_simulation("exposed_api"))
-    elif view == "Red Simulation":
-        action("RUN EXPOSED-API SIMULATION", app.state is WorkflowState.INVESTIGATED, lambda: app.run_red_simulation("exposed_api"))
-    elif view == "Blue Response":
-        columns = st.columns(2)
-        with columns[0]:
-            action("GENERATE BLUE PROPOSAL", app.state is WorkflowState.RED_SIMULATED, app.generate_blue_recommendations)
-        with columns[1]:
-            operator = st.text_input("Operator identity", value="demo-operator", label_visibility="collapsed", placeholder="Operator identity")
-            action("APPROVE SIMULATED CONTROL", app.state is WorkflowState.BLUE_RECOMMENDED, lambda: app.approve_recommendation(operator))
-    elif view == "Verification":
-        columns = st.columns(2)
-        with columns[0]:
-            action("APPLY APPROVED SIMULATION", app.state is WorkflowState.AWAITING_APPROVAL, app.apply_simulated_remediation)
-        with columns[1]:
-            action("RUN INDEPENDENT VERIFIER", app.state is WorkflowState.REMEDIATION_IN_PROGRESS, app.verify_remediation)
-    elif view == "Audit & Reports":
-        payload = json.dumps(report, indent=2, default=str)
-        columns = st.columns(2)
-        with columns[0]:
-            st.download_button("DOWNLOAD AUDIT JSON", payload, "asteria-audit.json", "application/json", use_container_width=True)
-        with columns[1]:
-            st.download_button("DOWNLOAD AUDIT MARKDOWN", "# Asteria Incident Report\n\n" + payload, "asteria-audit.md", "text/markdown", use_container_width=True)
-        question = st.text_input("Ask a record-grounded question", placeholder="What is the current verification state?")
+def home(batch):
+    st.title("Asteria Command Center")
+    st.write("Review network-flow signals from 20 UNSW-NB15 samples and follow a case through the isolated response demo.")
+    if batch.state is WorkflowState.CREATED:
+        st.button(
+            "Initialize Models", key="initialize",
+            on_click=perform, args=(batch.initialize,), kwargs={"destination": "Detection"},
+            type="primary",
+        )
+    else:
+        st.success("Models initialized. Open Detection from the top navigation.")
+
+
+def grid(rows):
+    st.dataframe(list(rows), height=35 * (len(rows) + 1) + 3, hide_index=True)
+
+
+def detection(batch, report):
+    st.title("Detection Engine")
+    st.caption("Each model output is a signal. Compromise requires independent evidence.")
+    if batch.state is WorkflowState.CREATED:
+        st.info("Initialize the models on Home to load the 20 sampled flows.")
+        return
+    if batch.state is WorkflowState.MODELS_READY:
+        st.button("Detect", key="detect", on_click=perform, args=(batch.run_detection,), type="primary")
+    signals = {row["event_id"]: row for row in report["detection_cases"]}
+    st.subheader("Detection results" if signals else "Loaded telemetry")
+    if signals:
+        st.caption(f"{len(signals)} scored events. Open Investigations to inspect a case.")
+    else:
+        st.caption("Telemetry is ready. Select Detect to produce model scores.")
+    rows = []
+    for flow in report["telemetry"]:
+        row = {
+            "Event": flow["event_id"], "Protocol": flow["protocol"],
+            "Service": flow["service"], "State": flow["state"],
+            "Duration (s)": flow["duration"],
+            "Source bytes": flow["source_bytes"], "Destination bytes": flow["destination_bytes"],
+        }
+        if signals:
+            signal = signals[flow["event_id"]]
+            row.update({
+                "Logistic class": signal["logistic_prediction"],
+                "Logistic probability": signal["logistic_probability"],
+                "Isolation class": signal["isolation_prediction"],
+                "Isolation score": signal["isolation_score"],
+                "XGBoost class": signal["xgboost_prediction"],
+                "XGBoost probability": signal["xgboost_probability"],
+            })
+        rows.append(row)
+    grid(rows)
+
+
+def investigations(batch, report, selected):
+    st.title("Investigations")
+    events = [row["event_id"] for row in report["detection_cases"]]
+    if not events:
+        st.info("Run Detect on the Detection page to populate the case queue.")
+        return
+    candidate = st.selectbox(
+        "Event to inspect", events, index=events.index(selected) if selected in events else 0,
+        key="case_candidate",
+    )
+    if candidate != selected:
+        st.button("Open case", key="open_case", on_click=perform, args=(open_case, batch, candidate))
+    record = report["investigation"]
+    if not record:
+        st.info("Choose an event and open its case to inspect the evidence.")
+        return
+    st.subheader(record["investigation_id"])
+    st.caption(f"Event {selected} · {report['workflow_state'].replace('_', ' ')}")
+    flow = next(row for row in report["telemetry"] if row["event_id"] == selected)
+    grid([flow])
+    st.subheader("Model signals")
+    signal = next(row for row in report["detection_cases"] if row["event_id"] == selected)
+    grid([
+        {
+            "Model": "Logistic regression", "Class": signal["logistic_prediction"],
+            "Score": signal["logistic_probability"], "Score type": "Probability",
+        },
+        {
+            "Model": "Isolation forest", "Class": signal["isolation_prediction"],
+            "Score": signal["isolation_score"], "Score type": "Anomaly score",
+        },
+        {
+            "Model": "XGBoost", "Class": signal["xgboost_prediction"],
+            "Score": signal["xgboost_probability"], "Score type": "Probability",
+        },
+    ])
+    with st.expander("Evidence, observations and timeline"):
+        keys = ("evidence_references", "observations", "model_signals", "timeline")
+        st.json({key: record[key] for key in keys})
+
+
+def stage_button(case, operation, *args):
+    label, key = STEPS[case.state]
+    st.button(label, key=key, on_click=perform, args=(operation, *args), type="primary")
+
+
+def red_panel(case, report):
+    st.title("Red Simulation")
+    st.caption("Isolated scenario visualization")
+    finding = report["red_finding"]
+    if case.state is WorkflowState.INVESTIGATED:
+        stage_button(case, case.run_red_simulation, "exposed_api")
+    if not finding:
+        st.info("Generate the simulated path to display it for this event.")
+        return
+    graph = report["attack_graph"]
+    nodes = {node["node_id"]: node for node in graph["nodes"]}
+    cards = [
+        "<article><strong>" + escape(nodes[node_id]["display_name"]) + "</strong></article>"
+        for node_id in graph["candidate_path"]["node_ids"]
+    ]
+    connector = '<span class="connector" aria-hidden="true">→</span>'
+    st.html('<div class="asteria-graph">' + connector.join(cards) + "</div>")
+    st.write(finding["explanation"])
+    for limitation in finding["limitations"]:
+        st.caption(limitation)
+
+
+def blue_panel(case, report):
+    st.title("Blue Response")
+    if case.state is WorkflowState.RED_SIMULATED:
+        stage_button(case, case.generate_blue_recommendations)
+    if not report["recommendations"]:
+        st.info("Generate a path on Red Simulation first, then prepare a defensive proposal here.")
+        return
+    for item in report["recommendations"]:
+        st.subheader(item["title"])
+        st.write(item["rationale"])
+        st.write(item["expected_security_effect"])
+        st.caption(item["operational_impact"])
+    if case.state is WorkflowState.BLUE_RECOMMENDED:
+        stage_button(case, case.approve_recommendation, "demo-operator")
+    if report["approval"]:
+        st.success("Sandbox control approved. Continue in Verification.")
+
+
+def verification_panel(case, report):
+    st.title("Verification")
+    if case.state is WorkflowState.AWAITING_APPROVAL and report["approval"]:
+        stage_button(case, case.apply_simulated_remediation)
+    elif case.state is WorkflowState.REMEDIATION_IN_PROGRESS:
+        stage_button(case, case.verify_remediation)
+    verification = report["verification"]
+    if not verification:
+        st.info("Approve the proposed control on Blue Response, then apply and verify it here.")
+        return
+    present = st.success if verification["status"] == "verified" else st.error
+    present(verification["explanation"])
+    before, after = st.columns(2)
+    before.metric("Before simulated control", "Reachable" if verification["before_graph_reachable"] else "Blocked")
+    after.metric("After simulated control", "Reachable" if verification["after_graph_reachable"] else "Blocked")
+    grid(verification["checks"])
+
+
+def audit(report):
+    st.title("Audit & Reports")
+    record = report["investigation"]
+    if not record:
+        st.info("Open a case in Investigations to view its audit and downloads.")
+        return
+    details, exports = st.columns([3, 1])
+    with details:
+        st.subheader(record["investigation_id"])
+        st.caption(f"Event {report['selected_event_id']} · {report['incident_status'].replace('_', ' ')}")
+        st.subheader("Investigation timeline")
+        grid(record["timeline"])
+        for label, key in (
+            ("Evidence and observations", "investigation"), ("Simulated path", "red_finding"),
+            ("Defensive proposals", "recommendations"), ("Approval", "approval"),
+            ("Sandbox application", "remediation_audit"), ("Verification", "verification"),
+        ):
+            with st.expander(label):
+                if report[key]:
+                    st.json(report[key])
+                else:
+                    st.caption("Pending")
+    with exports:
+        payload = json.dumps(report, indent=2)
+        st.download_button("Download JSON", payload, "asteria-audit.json", "application/json")
+        markdown = "# Asteria Incident Report\n\n" + chr(96) * 3 + "json\n" + payload + "\n" + chr(96) * 3 + "\n"
+        st.download_button("Download Markdown", markdown, "asteria-audit.md", "text/markdown")
+        question = st.text_input("Ask about this record")
         if question:
             st.info(answer("Security Engineer", question, report))
 
 
-def main() -> None:
-    st.set_page_config(page_title="ASTERIA | SOC", layout="wide", initial_sidebar_state="collapsed")
-    css = (ROOT / "assets" / "asteria.css").read_text(encoding="utf-8")
-    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
-    app = workflow()
-    requested_action = st.query_params.get("action")
-    if isinstance(requested_action, str):
-        requested_event = st.query_params.get("event")
-        route_action(app, requested_action, requested_event if isinstance(requested_event, str) else None)
-        requested_route = st.query_params.get("view")
-        st.query_params.clear()
-        if requested_route in VIEWS:
-            st.query_params["view"] = requested_route
-        st.rerun()
-    report = app.export_audit_report()
-    requested_view = st.query_params.get("view")
-    if requested_view in VIEWS:
-        st.session_state.active_soc_view = requested_view
-    view = st.session_state.get("active_soc_view", "Command Center")
-    # The visible console header owns navigation and actions. Its links target
-    # the top-level Streamlit document, where the query-param router above
-    # validates and performs the allowed in-memory transition.
-    # st.html renders into Streamlit's document rather than an isolated iframe.
-    # That keeps the dashboard responsive and lets its visible links update the
-    # top-level query-param router.
-    st.html(screen_html(report, view))
+def main():
+    st.set_page_config(page_title="Asteria | SOC", layout="wide", initial_sidebar_state="collapsed")
+    css = (ROOT / "assets" / "asteria_workspace.css").read_text(encoding="utf-8")
+    st.html(f'<style>{css}</style><span data-asteria-style hidden></span>')
+    with st.container():
+        st.html('<div data-asteria-brand><span aria-hidden="true">✦</span>Asteria</div>')
+        view = st.radio("Console navigation", VIEWS, horizontal=True, label_visibility="collapsed", key="demo_view")
+
+    if "demo_batch" not in st.session_state:
+        st.session_state.demo_batch = DemoOrchestrator(ROOT)
+        st.session_state.demo_cases = {}
+    batch = st.session_state.demo_batch
+    event_id = st.session_state.get("demo_event")
+    case = st.session_state.demo_cases.get(event_id)
+    error = st.session_state.get("demo_error")
+    if error:
+        st.error(error)
+
+    if view == "Home":
+        home(batch)
+    elif view == "Detection":
+        detection(batch, batch.export_audit_report())
+    elif view == "Investigations":
+        investigations(batch, (case or batch).export_audit_report(), event_id)
+    elif view == "Audit & Reports":
+        audit((case or batch).export_audit_report())
+    elif case is None:
+        st.title(view)
+        st.info("Open a case in Investigations to populate this panel.")
+    else:
+        panel = {"Red Simulation": red_panel, "Blue Response": blue_panel, "Verification": verification_panel}
+        st.caption(f"Selected case · {event_id}")
+        panel[view](case, case.export_audit_report())
 
 
 if __name__ == "__main__":
