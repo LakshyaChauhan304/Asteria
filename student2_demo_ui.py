@@ -33,6 +33,13 @@ CSS = CSS.replace(".nav span{", ".nav span,.nav a{").replace(".nav .on{", ".nav 
 CSS = CSS.replace("</style>", ".top-action{border:1px solid #e8ae2b;color:#e8ae2b;text-decoration:none;padding:8px 11px;font:9px ui-monospace,Consolas,monospace;letter-spacing:1.2px;white-space:nowrap}.top-action:hover{background:#e8ae2b;color:#07101b}</style>")
 CSS = CSS.replace("</style>", ".flow-map{width:100%;margin-top:165px;display:grid;grid-template-columns:1fr 42px 1fr;gap:12px 8px;align-items:center}.flow-card{min-height:135px;border:1px solid #3a495c;background:#09121f;padding:16px;position:relative;cursor:pointer}.flow-card:before{content:'';position:absolute;left:0;top:0;height:3px;width:100%;background:#94a9bd}.flow-card.red:before{background:#ff6873}.flow-card.amber:before{background:#e7ae2c}.flow-card.mint:before{background:#39daba}.flow-card.blue:before{background:#6da9ff}.flow-card label{display:block;color:#a8b7c8;font:10px ui-monospace,Consolas,monospace;letter-spacing:1.5px}.flow-card h2{font:24px Georgia,serif;margin:14px 0 7px}.flow-card p{font:13px Georgia,serif;color:#bcae9e;line-height:1.35;margin:0}.flow-card .state{font:10px ui-monospace,Consolas,monospace;letter-spacing:1px;color:#39daba}.flow-arrow{color:#9fb0bf;text-align:center;font:25px Georgia,serif}.flow-map .wide{grid-column:1/4;min-height:105px}.flow-map .wide:after{content:'';position:absolute;left:50%;top:-25px;height:25px;border-left:1px dashed #405268}.flow-caption{margin-top:23px;border-top:1px solid #243040;padding:15px 0;color:#acbdca;font:11px ui-monospace,Consolas,monospace;letter-spacing:1px}@media(max-width:900px){.flow-map{margin-top:55px}.flow-card h2{font-size:19px}}</style>")
 
+# Desktop sizing belongs to the viewport, not a fixed mockup canvas. These
+# overrides preserve the smaller breakpoints above while using wide monitors.
+CSS = CSS.replace(
+    "</style>",
+    ".shell{min-height:calc(100vh - 56px);padding:clamp(24px,3vh,48px) clamp(28px,4vw,72px) 52px}.layout{grid-template-columns:minmax(280px,.8fr) minmax(680px,2fr) minmax(300px,.9fr);gap:clamp(24px,2vw,46px);min-height:calc(100vh - 156px)}.center{min-height:clamp(620px,calc(100vh - 170px),900px)}.flow-map{margin-top:clamp(52px,8vh,118px)}.blue-center .flow-map,.red-center .flow-map{margin-top:clamp(52px,9vh,128px)}@media(min-width:1600px){.display{font-size:clamp(52px,3.3vw,78px)}.copy{max-width:330px;font-size:clamp(17px,1vw,21px)}.flow-card{min-height:clamp(150px,17vh,220px);padding:clamp(18px,1.2vw,28px)}.flow-card h2{font-size:clamp(24px,1.55vw,34px)}.flow-card p{font-size:clamp(13px,.85vw,17px)}}</style>",
+)
+
 
 def _action_link(report: Mapping[str, object]) -> str:
     state = str(report.get("workflow_state", "created"))
