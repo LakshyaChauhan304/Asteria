@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from student2_demo_orchestrator import DemoOrchestrator, WorkflowState
 from student2_demo_qa import answer
@@ -120,16 +119,10 @@ def main() -> None:
     # The visible console header owns navigation and actions. Its links target
     # the top-level Streamlit document, where the query-param router above
     # validates and performs the allowed in-memory transition.
-    heights = {
-        "Command Center": 1040,
-        "Detection Engine": 1000,
-        "Investigations": 1000,
-        "Red Simulation": 1000,
-        "Blue Response": 1000,
-        "Verification": 1000,
-        "Audit & Reports": 1000,
-    }
-    components.html(screen_html(report, view), height=heights[view], scrolling=False)
+    # st.html renders into Streamlit's document rather than an isolated iframe.
+    # That keeps the dashboard responsive and lets its visible links update the
+    # top-level query-param router.
+    st.html(screen_html(report, view))
 
 
 if __name__ == "__main__":

@@ -52,6 +52,11 @@ def _action_link(report: Mapping[str, object]) -> str:
     return f'<a class="top-action" href="/{query}" target="_top">{label}</a>'
 
 
+def _route_link(view: str, label: str) -> str:
+    query = view.replace(" ", "%20").replace("&", "%26")
+    return f'<a class="button" href="/?view={query}" target="_top">{label}<i>→</i></a>'
+
+
 def _header(active: str, report: Mapping[str, object]) -> str:
     pages = (("Command Center", "COMMAND"), ("Detection Engine", "DETECTIONS"), ("Investigations", "INVESTIGATIONS"), ("Red Simulation", "RED"), ("Blue Response", "BLUE"), ("Verification", "VERIFICATION"), ("Audit & Reports", "AUDIT"))
     nav = "".join(
@@ -113,7 +118,7 @@ def command_center_html(report: Mapping[str, object]) -> str:
     event = _s(report.get("selected_event_id"), "UNSW-NB15-8318")
     left = _left("AST–0001", "Exposed API path to a sensitive data store, intercepted at ingress.", (("DETECTION EVENT", event, "mono"), ("SIGNALS", "3 independent outputs", ""), ("HUMAN GATE", _s(_m(report, "approval").get("decision"), "Approved"), "mint"), ("VERIFICATION", "Passed · path unreachable", "mint")))
     stages = "".join(f'<span class="{"on" if index == 1 else ""}">{label}</span>' for index, label in enumerate(("01", "02", "03", "04A", "04B", "05", "06", "07"), 1))
-    right = f'''<section class="right"><span class="right-title">STAGE INSPECTOR · READ ONLY</span><div class="selector">{stages}</div><h2 class="stage-name">Telemetry</h2><div class="inspect"><label>INPUT</label><p>Network flow record ingested for scoring. Read only.</p></div><div class="inspect"><label>OUTPUT</label><p>{event}</p></div><div class="inspect"><label>AUTHORITY</label><p>None · data only</p></div><a class="button">OPEN IN AUDIT <i>→</i></a><div class="hyp"><span class="kicker">HYPOTHESIS · UNCONFIRMED</span><br>A detection signal may warrant investigation. It is not proof of compromise and never grants authorization.</div></section>'''
+    right = f'''<section class="right"><span class="right-title">STAGE INSPECTOR · READ ONLY</span><div class="selector">{stages}</div><h2 class="stage-name">Telemetry</h2><div class="inspect"><label>INPUT</label><p>Network flow record ingested for scoring. Read only.</p></div><div class="inspect"><label>OUTPUT</label><p>{event}</p></div><div class="inspect"><label>AUTHORITY</label><p>None · data only</p></div>{_route_link("Audit & Reports", "OPEN IN AUDIT")}<div class="hyp"><span class="kicker">HYPOTHESIS · UNCONFIRMED</span><br>A detection signal may warrant investigation. It is not proof of compromise and never grants authorization.</div></section>'''
     return _header("Command Center", report) + f'<main class="shell"><div class="layout">{left}<section class="center">{_orbital(report)}</section>{right}</div></main>' + _footer()
 
 
@@ -123,7 +128,7 @@ def detection_html(report: Mapping[str, object]) -> str:
     score = _s(evidence.get("model_score"), "0.9998386")
     left = _left("Signals, not verdicts", "Three independent outputs are recorded for one event. A signal may warrant investigation; it is not proof of compromise.", (("EVENT", _s(report.get("selected_event_id"), "UNSW-NB15-8318"), "mono"), ("SELECTED MODEL", "XGBoost", ""), ("INDEPENDENT OUTPUTS", "3", "")))
     center = f'''<section class="center"><div class="signal-console"><article class="signal-card"><label>MODEL 01 · BASELINE</label><h2>Logistic regression</h2><b>DETECTED</b><p>Supervised baseline output retained with source provenance.</p></article><article class="signal-card"><label>MODEL 02 · ANOMALY</label><h2>Isolation forest</h2><b>ANOMALY</b><p>Unsupervised anomaly signal remains independent from other models.</p></article><article class="signal-card"><label>MODEL 03 · SELECTED</label><h2>XGBoost runtime</h2><b>{score}</b><p>Artifact-backed score for {_s(report.get("selected_event_id"), "UNSW-NB15-8318")}.</p></article></div><div class="signal-link"></div><p class="signal-summary">The investigator receives three model signals as recorded facts. It keeps model outputs separate from inferences, hypotheses, authorization, and execution.</p></section>'''
-    right = '''<section class="right"><span class="right-title">EVIDENCE CLASSES</span><div class="eclass"><b>I · FACT</b><p>Each model output remains a recorded detection signal with its own provenance.</p></div><div class="eclass mint"><b>II · INFERENCE</b><p>The investigator may request more read-only context after reviewing the signals.</p></div><div class="eclass red"><b>III · HYPOTHESIS</b><p>Potential compromise stays unconfirmed until independent evidence supports it.</p></div><a class="button">OPEN AST–0001 <i>→</i></a></section>'''
+    right = f'''<section class="right"><span class="right-title">EVIDENCE CLASSES</span><div class="eclass"><b>I · FACT</b><p>Each model output remains a recorded detection signal with its own provenance.</p></div><div class="eclass mint"><b>II · INFERENCE</b><p>The investigator may request more read-only context after reviewing the signals.</p></div><div class="eclass red"><b>III · HYPOTHESIS</b><p>Potential compromise stays unconfirmed until independent evidence supports it.</p></div>{_route_link("Investigations", "OPEN AST–0001")}</section>'''
     return _header("Detection Engine", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
 
 
@@ -132,7 +137,7 @@ def investigations_html(report: Mapping[str, object]) -> str:
     left = _left("Case queue", "Every investigation traces from a model signal to an independently verified, simulated response.", (("OPEN", "[N]", ""), ("VERIFIED", "1", "mint"), ("FILTER", "ALL   OPEN   VERIFIED", "mono")))
     stages = ''.join(f'<span>{item}</span>' for item in ("01", "02", "03", "04A", "04B", "05", "06", "07"))
     center = f'''<section class="center queue"><span class="kicker">CASE QUEUE · RECORDED RUN · 1 INVESTIGATION</span><article class="case"><div><h2>AST–0001</h2><p>Exposed API path to a sensitive data store</p><div class="mini-stages">{stages}</div></div><div><label class="kicker">EVENT</label><b>{event}</b></div><div><label class="kicker">STATUS</label><p class="verified">Verified</p></div></article><article class="case empty"><div><h2>[NEXT CASE ID]</h2><p>[Investigation title]</p><div class="mini-stages">{stages}</div></div><div>EVENT<br>[EVENT ID]</div><div>STATUS<br>—</div></article><article class="case empty"><div><h2>[NEXT CASE ID]</h2><p>[Investigation title]</p><div class="mini-stages">{stages}</div></div><div>EVENT<br>[EVENT ID]</div><div>STATUS<br>—</div></article></section>'''
-    right = '<section class="right"><span class="right-title">SELECTED CASE</span><h2 class="stage-name">AST–0001</h2><div class="progress"><div><b>7 / 7</b><small>STAGES</small></div></div><div class="fact"><label>HUMAN GATE</label><b class="mint">Approved</b></div><div class="fact"><label>VERIFICATION</label><b class="mint">Passed · path unreachable</b></div><a class="button">OPEN CASE <i>→</i></a></section>'
+    right = f'<section class="right"><span class="right-title">SELECTED CASE</span><h2 class="stage-name">AST–0001</h2><div class="progress"><div><b>7 / 7</b><small>STAGES</small></div></div><div class="fact"><label>HUMAN GATE</label><b class="mint">Approved</b></div><div class="fact"><label>VERIFICATION</label><b class="mint">Passed · path unreachable</b></div>{_route_link("Audit & Reports", "OPEN CASE")}</section>'
     return _header("Investigations", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
 
 
@@ -148,14 +153,14 @@ def blue_html(report: Mapping[str, object]) -> str:
     rec = items[0] if isinstance(items, list) and items and isinstance(items[0], Mapping) else {}
     left = _left("Control proposed", "A defensive control is proposed against the simulated path. A proposal grants nothing; the human gate decides.", (("CONTROL", _s(rec.get("target_control_id"), "ingress_restricted"), "mint mono"), ("TARGET", "Public API · entry point", ""), ("AUTHORITY", "None · proposal only", ""), ("HUMAN GATE", _s(_m(report, "approval").get("decision"), "Approved"), "mint")))
     center = f'<section class="center blue-center">{_box_flow("blue")}</section>'
-    right = '<section class="right"><span class="right-title">CONTROL SPECIFICATION</span><div class="spec"><label>TYPE</label><p>Ingress restriction</p></div><div class="spec"><label>SCOPE</label><p>Public API</p></div><div class="spec"><label>EXECUTION</label><p>Sandbox only</p></div><a class="button">VIEW VERIFICATION <i>→</i></a></section>'
+    right = f'<section class="right"><span class="right-title">CONTROL SPECIFICATION</span><div class="spec"><label>TYPE</label><p>Ingress restriction</p></div><div class="spec"><label>SCOPE</label><p>Public API</p></div><div class="spec"><label>EXECUTION</label><p>Sandbox only</p></div>{_route_link("Verification", "VIEW VERIFICATION")}</section>'
     return _header("Blue Response", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
 
 
 def verification_html(report: Mapping[str, object]) -> str:
     left = _left("Path unreachable", "The verifier re-ran the path query after the approved sandbox control. It is independent of the agents that proposed it.", (("RESULT", "Passed · path unreachable", "mint"), ("CONTROL", "ingress_restricted", "mono"), ("VERIFIER", "07 · independent", "")))
     center = '''<section class="center verify-center">''' + _box_flow("verification") + '''</section>'''
-    right = '<section class="right"><span class="right-title">VERIFIER CHECKS</span><div class="checks"><div><b>■</b>Path query re-run after the control</div><div><b>■</b>External actor to sensitive data store: unreachable</div><div><b>■</b>Result recorded as verified state</div></div><div class="fact"><label>VERIFIED STATE</label><b class="mint">Passed</b></div><a class="button">OPEN IN AUDIT <i>→</i></a></section>'
+    right = f'<section class="right"><span class="right-title">VERIFIER CHECKS</span><div class="checks"><div><b>■</b>Path query re-run after the control</div><div><b>■</b>External actor to sensitive data store: unreachable</div><div><b>■</b>Result recorded as verified state</div></div><div class="fact"><label>VERIFIED STATE</label><b class="mint">Passed</b></div>{_route_link("Audit & Reports", "OPEN IN AUDIT")}</section>'
     return _header("Verification", report) + f'<main class="shell"><div class="layout">{left}{center}{right}</div></main>' + _footer()
 
 
