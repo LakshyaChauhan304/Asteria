@@ -122,3 +122,36 @@
         gap: 6px;
     }
 }
+
+/* T5 sidebar shell */
+[data-testid="stSidebar"] {
+    display: block;
+    background: #080f1c;
+    border-right: 1px solid var(--asteria-line);
+}
+
+.stApp [data-testid="stSidebar"] [data-testid="stVerticalBlock"]:has(
+    > :is(.element-container, [data-testid="stElementContainer"]) [data-asteria-brand]
+) {
+    position: static;
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    padding: 0;
+    border: 0;
+}
+
+.stApp :is(.block-container, [data-testid="stMainBlockContainer"],
+          [data-testid="stAppViewBlockContainer"]) {
+    padding: 24px clamp(16px, 2.5vw, 48px) 32px;
+}
+
+[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] {
+    flex-direction: column;
+    align-items: stretch;
+    overflow: visible;
+}
+
+[data-testid="stSidebar"] [data-testid="stRadio"] label {
+    width: 100%;
+}

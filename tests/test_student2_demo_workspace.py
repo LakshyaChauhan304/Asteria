@@ -42,42 +42,55 @@ class DemoWorkspaceTests(unittest.TestCase):
         self.assertFalse(app.button)
 
         first, second = rows["Event"].iloc[:2]
-        visit("Investigations")
-        app.selectbox(key="case_candidate").select(first).run()
-        press("open_case")
-        self.assertEqual(app.dataframe[0].value.iloc[0]["event_id"], first)
-        self.assertEqual(len(app.dataframe[1].value), 3)
+        visit("Cases")
+        def select_case(index):
+            app.session_state["case_queue"] = {
+                "selection": {"rows": [index], "columns": [], "cells": []}
+            }
+            app.run()
+            clean()
 
-        visit("Red Simulation")
+        select_case(0)
+        self.assertEqual(app.dataframe[1].value.iloc[0]["event_id"], first)
+        self.assertEqual(len(app.dataframe[2].value), 3)
+
+        app.radio(key="case_stage").set_value("Red Simulation").run()
         press("red")
-        self.assertIn("Public API", app.get("html")[-1].proto.body)
-        visit("Blue Response")
+        self.assertTrue(any("Public API" in item.proto.body for item in app.get("html")))
+        app.radio(key="case_stage").set_value("Blue Response").run()
         press("blue")
         self.assertTrue(any("Restrict public ingress" in h.value for h in app.subheader))
-        visit("Verification")
+        app.radio(key="case_stage").set_value("Verification").run()
         self.assertFalse(app.button)
-        visit("Blue Response")
+        app.radio(key="case_stage").set_value("Blue Response").run()
         press("approve")
-        visit("Verification")
+        app.radio(key="case_stage").set_value("Verification").run()
         press("apply")
         press("verify")
         self.assertEqual([metric.value for metric in app.metric], ["Reachable", "Blocked"])
-        self.assertTrue(app.dataframe[0].value["passed"].all())
+        self.assertTrue(app.dataframe[-1].value["passed"].all())
+
+        visit("Command Center")
+        metrics = {metric.label: metric.value for metric in app.metric}
+        self.assertEqual(metrics["Cases opened"], "1")
+        self.assertEqual(metrics["Cases verified"], "1")
 
         visit("Audit & Reports")
         self.assertEqual(len(app.get("download_button")), 2)
         self.assertTrue(any(first in caption.value for caption in app.caption))
 
-        visit("Investigations")
-        app.selectbox(key="case_candidate").select(second).run()
-        press("open_case")
-        self.assertEqual(app.dataframe[0].value.iloc[0]["event_id"], second)
-        visit("Verification")
+        visit("Cases")
+        select_case(1)
+        self.assertEqual(app.dataframe[1].value.iloc[0]["event_id"], second)
+        visit("Command Center")
+        metrics = {metric.label: metric.value for metric in app.metric}
+        self.assertEqual(metrics["Cases opened"], "2")
+        self.assertEqual(metrics["Cases verified"], "1")
+        visit("Cases")
+        app.radio(key="case_stage").set_value("Verification").run()
         self.assertFalse(app.metric)
-        visit("Investigations")
-        app.selectbox(key="case_candidate").select(first).run()
-        press("open_case")
-        visit("Verification")
+        select_case(0)
+        app.radio(key="case_stage").set_value("Verification").run()
         self.assertEqual([metric.value for metric in app.metric], ["Reachable", "Blocked"])
 
 

@@ -15,8 +15,7 @@ from student2_xgboost_runtime import XGBoostRuntime
 
 ROOT = Path(__file__).resolve().parent
 VIEWS = (
-    "Home", "Detection", "Investigations", "Red Simulation",
-    "Blue Response", "Verification", "Audit & Reports",
+    "Command Center", "Cases", "Detection", "Data Sources", "Audit & Reports",
 )
 STEPS = {
     WorkflowState.INVESTIGATED: ("Generate simulated path", "red"),
@@ -62,9 +61,39 @@ def open_case(batch, event_id):
     st.session_state.demo_event = event_id
 
 
+def models_disagree(detection):
+    """Model predictions disagree when the three class predictions are not equal."""
+    return len({
+        detection["logistic_prediction"],
+        detection["isolation_prediction"],
+        detection["xgboost_prediction"],
+    }) != 1
+
+
 def home(batch):
     st.title("Asteria Command Center")
-    st.write("Review network-flow signals from 20 UNSW-NB15 samples and follow a case through the isolated response demo.")
+    detections = batch.export_audit_report()["detection_cases"]
+    cases = st.session_state.demo_cases
+    reports = [case.export_audit_report() for case in cases.values()]
+    verified = sum(
+        report["workflow_state"] == "verified"
+        and (report["verification"] or {}).get("outcome") == "blocked"
+        for report in reports
+    )
+    metrics = st.columns(5)
+    for column, label, value in zip(
+        metrics,
+        ("Events scored", "2+ model signals", "Models disagree", "Cases opened", "Cases verified"),
+        (
+            len(detections),
+            sum(item["signal_count"] >= 2 for item in detections),
+            sum(models_disagree(item) for item in detections),
+            len(cases),
+            verified,
+        ),
+        strict=True,
+    ):
+        column.metric(label, value)
     if batch.state is WorkflowState.CREATED:
         st.button(
             "Initialize Models", key="initialize",
@@ -72,7 +101,7 @@ def home(batch):
             type="primary",
         )
     else:
-        st.success("Models initialized. Open Detection from the top navigation.")
+        st.success("Models initialized. Open Detection from the sidebar.")
 
 
 def grid(rows):
@@ -83,14 +112,14 @@ def detection(batch, report):
     st.title("Detection Engine")
     st.caption("Each model output is a signal. Compromise requires independent evidence.")
     if batch.state is WorkflowState.CREATED:
-        st.info("Initialize the models on Home to load the 20 sampled flows.")
+        st.info("Initialize the models on Command Center to load the 20 sampled flows.")
         return
     if batch.state is WorkflowState.MODELS_READY:
         st.button("Detect", key="detect", on_click=perform, args=(batch.run_detection,), type="primary")
     signals = {row["event_id"]: row for row in report["detection_cases"]}
     st.subheader("Detection results" if signals else "Loaded telemetry")
     if signals:
-        st.caption(f"{len(signals)} scored events. Open Investigations to inspect a case.")
+        st.caption(f"{len(signals)} scored events. Open Cases to inspect an event.")
     else:
         st.caption("Telemetry is ready. Select Detect to produce model scores.")
     rows = []
@@ -116,20 +145,39 @@ def detection(batch, report):
 
 
 def investigations(batch, report, selected):
-    st.title("Investigations")
-    events = [row["event_id"] for row in report["detection_cases"]]
-    if not events:
+    st.title("Cases")
+    detections = batch.export_audit_report()["detection_cases"]
+    if not detections:
         st.info("Run Detect on the Detection page to populate the case queue.")
         return
-    candidate = st.selectbox(
-        "Event to inspect", events, index=events.index(selected) if selected in events else 0,
-        key="case_candidate",
+    cases = st.session_state.demo_cases
+    rows = []
+    for detection in detections:
+        event_id = detection["event_id"]
+        case_report = cases[event_id].export_audit_report() if event_id in cases else None
+        rows.append({
+            "Event": event_id,
+            "Model signals": detection["signal_count"],
+            "Models disagree": "Models disagree" if models_disagree(detection) else "Agree",
+            "Workflow state": case_report["workflow_state"] if case_report else "Not opened",
+            "Incident status": case_report["incident_status"] if case_report else "Not opened",
+        })
+    selection = st.dataframe(
+        rows,
+        hide_index=True,
+        key="case_queue",
+        on_select="rerun",
+        selection_mode="single-row",
     )
-    if candidate != selected:
-        st.button("Open case", key="open_case", on_click=perform, args=(open_case, batch, candidate))
+    selected_rows = selection.selection.rows
+    if selected_rows:
+        candidate = rows[selected_rows[0]]["Event"]
+        if candidate != selected:
+            perform(open_case, batch, candidate)
+            st.rerun()
     record = report["investigation"]
     if not record:
-        st.info("Choose an event and open its case to inspect the evidence.")
+        st.info("Select a row to open its case and inspect the evidence.")
         return
     st.subheader(record["investigation_id"])
     st.caption(f"Event {selected} · {report['workflow_state'].replace('_', ' ')}")
@@ -209,7 +257,12 @@ def verification_panel(case, report):
         stage_button(case, case.verify_remediation)
     verification = report["verification"]
     if not verification:
-        st.info("Approve the proposed control on Blue Response, then apply and verify it here.")
+        if report["remediation_audit"]:
+            st.info("Control applied. Verification has not run.")
+        elif (report["approval"] or {}).get("decision") == "approved":
+            st.info("Control approved but not applied.")
+        else:
+            st.info("Control has not been approved.")
         return
     present = st.success if verification["status"] == "verified" else st.error
     present(verification["explanation"])
@@ -223,7 +276,7 @@ def audit(report):
     st.title("Audit & Reports")
     record = report["investigation"]
     if not record:
-        st.info("Open a case in Investigations to view its audit and downloads.")
+        st.info("Open a case in Cases to view its audit and downloads.")
         return
     details, exports = st.columns([3, 1])
     with details:
@@ -252,12 +305,12 @@ def audit(report):
 
 
 def main():
-    st.set_page_config(page_title="Asteria | SOC", layout="wide", initial_sidebar_state="collapsed")
+    st.set_page_config(page_title="Asteria | SOC", layout="wide", initial_sidebar_state="expanded")
     css = (ROOT / "assets" / "asteria_workspace.css").read_text(encoding="utf-8")
     st.html(f'<style>{css}</style><span data-asteria-style hidden></span>')
-    with st.container():
+    with st.sidebar:
         st.html('<div data-asteria-brand><span aria-hidden="true">✦</span>Asteria</div>')
-        view = st.radio("Console navigation", VIEWS, horizontal=True, label_visibility="collapsed", key="demo_view")
+        view = st.radio("Console navigation", VIEWS, label_visibility="collapsed", key="demo_view")
 
     st.warning(
         "Demo - isolated simulation. Public/synthetic data only. "
@@ -274,21 +327,30 @@ def main():
     if error:
         st.error(error)
 
-    if view == "Home":
+    if view == "Command Center":
         home(batch)
     elif view == "Detection":
         detection(batch, batch.export_audit_report())
-    elif view == "Investigations":
+    elif view == "Cases":
         investigations(batch, (case or batch).export_audit_report(), event_id)
+        if st.session_state.get("demo_event"):
+            case = st.session_state.demo_cases[st.session_state.demo_event]
+            panel_name = st.radio(
+                "Case stage", ("Evidence", "Red Simulation", "Blue Response", "Verification"),
+                horizontal=True, key="case_stage",
+            )
+            panel = {
+                "Red Simulation": red_panel,
+                "Blue Response": blue_panel,
+                "Verification": verification_panel,
+            }
+            if panel_name != "Evidence":
+                panel[panel_name](case, case.export_audit_report())
+    elif view == "Data Sources":
+        st.title("Data Sources")
+        st.info("Not connected in this demo")
     elif view == "Audit & Reports":
         audit((case or batch).export_audit_report())
-    elif case is None:
-        st.title(view)
-        st.info("Open a case in Investigations to populate this panel.")
-    else:
-        panel = {"Red Simulation": red_panel, "Blue Response": blue_panel, "Verification": verification_panel}
-        st.caption(f"Selected case · {event_id}")
-        panel[view](case, case.export_audit_report())
 
 
 if __name__ == "__main__":
