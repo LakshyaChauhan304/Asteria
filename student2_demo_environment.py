@@ -10,6 +10,8 @@ from enum import StrEnum
 class ApprovalDecision(StrEnum):
     APPROVED = "approved"
     DECLINED = "declined"
+    ESCALATED = "escalated"
+    MORE_EVIDENCE_REQUESTED = "more_evidence_requested"
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,7 @@ class ApprovalEvent:
     decision: ApprovalDecision
     timestamp: str
     simulation_only: bool = True
+    note: str = ""
 
     def __post_init__(self) -> None:
         if not all(isinstance(value, str) and value for value in (
@@ -28,6 +31,8 @@ class ApprovalEvent:
             self.timestamp,
         )):
             raise ValueError("approval fields must be non-empty strings")
+        if not isinstance(self.note, str) or len(self.note) > 500:
+            raise ValueError("approval note must be text of at most 500 characters")
         if type(self.decision) is not ApprovalDecision or self.simulation_only is not True:
             raise ValueError("approval must be an explicit simulation-only decision")
 

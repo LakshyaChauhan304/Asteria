@@ -104,48 +104,162 @@ class ScenarioDefinition:
     control_id: str
 
 
+# Node tuples: (name, asset_type, trust_zone, criticality, description).
+# The first four nodes form the primary entry-to-target chain; later nodes are
+# alternate routes and decoys. Extra edges are 1-based (source, target, controlled).
+_SCENARIOS = {
+    "exposed_api": {
+        "control": "ingress_restricted",
+        "nodes": (
+            ("External Actor", "external_entity", "untrusted", "low", "Untrusted origin on the public internet"),
+            ("Public API", "api_gateway", "dmz", "high", "Internet-facing API endpoint"),
+            ("Workload Identity", "identity", "internal", "high", "Service identity used by the API workload"),
+            ("Sensitive Data Store", "data_store", "restricted", "critical", "Protected resource holding sensitive records"),
+            ("Edge Proxy", "proxy", "dmz", "medium", "Alternate edge route into the public API"),
+            ("Bastion Host", "host", "management", "medium", "Management host with no route to the data store"),
+            ("Admin Console", "application", "management", "medium", "Admin interface reachable only through the bastion"),
+            ("Audit Log Service", "service", "internal", "low", "Log sink fed by the workload identity"),
+        ),
+        "extra_edges": ((1, 5, True), (5, 2, True), (1, 6, False), (6, 7, False), (3, 8, False)),
+    },
+    "credential_misuse": {
+        "control": "service_credentials_rotated",
+        "nodes": (
+            ("Untrusted Client", "external_entity", "untrusted", "low", "Client without a trusted identity"),
+            ("Legacy Service", "service", "dmz", "high", "Older service that still accepts static credentials"),
+            ("Service Identity", "identity", "internal", "high", "Long-lived service credential"),
+            ("Internal Resource", "data_store", "restricted", "critical", "Protected internal resource"),
+            ("Auth Gateway", "gateway", "dmz", "medium", "Alternate authentication route into the service identity"),
+            ("Batch Scheduler", "service", "internal", "low", "Scheduler with no route to the internal resource"),
+            ("Secrets Cache", "data_store", "internal", "medium", "Cache reachable only through the scheduler"),
+        ),
+        "extra_edges": ((1, 5, False), (5, 3, True), (2, 6, False), (6, 7, False)),
+    },
+    "suspicious_egress": {
+        "control": "egress_restricted",
+        "nodes": (
+            ("Workload Identity", "identity", "internal", "high", "Workload originating the outbound traffic"),
+            ("Internal Data Store", "data_store", "restricted", "critical", "Store holding data that could leave the network"),
+            ("Egress Proxy", "proxy", "dmz", "high", "Outbound gateway to external networks"),
+            ("External Sink", "external_entity", "untrusted", "low", "External destination outside the trust boundary"),
+            ("DNS Resolver", "service", "dmz", "medium", "Alternate outbound route through DNS"),
+            ("Metrics Agent", "service", "internal", "low", "Agent with no route to the external sink"),
+            ("Backup Target", "data_store", "internal", "medium", "Internal backup with no external route"),
+        ),
+        "extra_edges": ((1, 5, False), (5, 4, True), (1, 6, False), (2, 7, False)),
+    },
+}
+
+
+def scenario_ids() -> tuple[str, ...]:
+    return tuple(_SCENARIOS)
+
+
 def scenario_definition(scenario_id: str) -> ScenarioDefinition:
-    scenarios = {
-        "exposed_api": ("External Actor", "Public API", "Workload Identity", "Sensitive Data Store", "ingress_restricted"),
-        "credential_misuse": ("Untrusted Client", "Legacy Service", "Service Identity", "Internal Resource", "service_credentials_rotated"),
-        "suspicious_egress": ("Workload Identity", "Internal Data Store", "Egress Proxy", "External Sink", "egress_restricted"),
-    }
-    if scenario_id not in scenarios:
+    if scenario_id not in _SCENARIOS:
         raise ValueError("unknown simulated scenario")
-    names = scenarios[scenario_id]
-    nodes = tuple(AttackGraphNode(f"{scenario_id}:n{index}", name, "simulated_asset", "demo", "high", name) for index, name in enumerate(names[:4], 1))
-    edges = tuple(AttackGraphEdge(f"{scenario_id}:e{index}", nodes[index - 1].node_id, nodes[index].node_id, "simulated_reachability", ("simulation_precondition",), (names[4],)) for index in range(1, 4))
-    return ScenarioDefinition(scenario_id, AttackGraph(nodes, edges, nodes[0].node_id, nodes[-1].node_id), names[4])
+    spec = _SCENARIOS[scenario_id]
+    control = spec["control"]
+    nodes = tuple(
+        AttackGraphNode(f"{scenario_id}:n{index}", name, asset_type, zone, criticality, description)
+        for index, (name, asset_type, zone, criticality, description) in enumerate(spec["nodes"], 1)
+    )
+    chain = tuple((index, index + 1, True) for index in range(1, 4))
+    edges = tuple(
+        AttackGraphEdge(
+            f"{scenario_id}:e{number}", nodes[source - 1].node_id, nodes[target - 1].node_id,
+            "simulated_reachability" if number <= 3 else ("alternate_route" if controlled else "adjacent_service"),
+            ("simulation_precondition",), (control,) if controlled else (),
+        )
+        for number, (source, target, controlled) in enumerate(chain + spec["extra_edges"], 1)
+    )
+    return ScenarioDefinition(scenario_id, AttackGraph(nodes, edges, nodes[0].node_id, nodes[3].node_id), control)
 
 
-def evaluate_reachability(graph: AttackGraph, controls: dict[str, bool], *, max_path_length: int = 8, max_visited: int = 64) -> AttackPath:
-    """Bounded BFS; controls block traversal but never invoke external systems."""
-
-    if max_path_length < 1 or max_visited < 1:
-        raise ValueError("traversal limits must be positive")
-    adjacency: dict[str, list[AttackGraphEdge]] = {}
+def _blocked_edge_ids(graph: AttackGraph, controls: dict[str, bool]) -> set[str]:
     for edge in graph.edges:
         if any(control not in controls for control in edge.blocking_control_ids):
             raise ValueError("graph references an unknown environment control")
-        adjacency.setdefault(edge.source_node_id, []).append(edge)
+    return {edge.edge_id for edge in graph.edges if any(controls[control] for control in edge.blocking_control_ids)}
+
+
+def _shortest_path(
+    graph: AttackGraph, blocked: set[str], max_path_length: int, max_visited: int
+) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+    adjacency: dict[str, list[AttackGraphEdge]] = {}
+    for edge in graph.edges:
+        if edge.edge_id not in blocked:
+            adjacency.setdefault(edge.source_node_id, []).append(edge)
     queue: deque[tuple[str, tuple[str, ...], tuple[str, ...]]] = deque([(graph.entry_node_id, (graph.entry_node_id,), ())])
     visited = {graph.entry_node_id}
-    candidate: tuple[tuple[str, ...], tuple[str, ...]] | None = None
     while queue and len(visited) <= max_visited:
         node, nodes, edges = queue.popleft()
         if node == graph.target_node_id:
-            candidate = (nodes, edges)
-            break
+            return nodes, edges
         if len(edges) >= max_path_length:
             continue
         for edge in adjacency.get(node, []):
             if edge.target_node_id not in visited:
                 visited.add(edge.target_node_id)
                 queue.append((edge.target_node_id, nodes + (edge.target_node_id,), edges + (edge.edge_id,)))
-    if candidate is None:
+    return None
+
+
+def evaluate_reachability(graph: AttackGraph, controls: dict[str, bool], *, max_path_length: int = 8, max_visited: int = 64) -> AttackPath:
+    """Bounded BFS that honours active controls; it never invokes external systems.
+
+    The target is reachable only if some route avoids every blocked edge. When all
+    routes are blocked the structural path is returned with reachable=False so it
+    can still be displayed.
+    """
+
+    if max_path_length < 1 or max_visited < 1:
+        raise ValueError("traversal limits must be positive")
+    blocked = _blocked_edge_ids(graph, controls)
+    open_path = _shortest_path(graph, blocked, max_path_length, max_visited)
+    if open_path is not None:
+        return AttackPath(open_path[0], open_path[1], True)
+    structural = _shortest_path(graph, set(), max_path_length, max_visited)
+    if structural is None:
         raise ValueError("no bounded candidate path exists")
-    reachable = all(not controls[control] for edge_id in candidate[1] for edge in graph.edges if edge.edge_id == edge_id for control in edge.blocking_control_ids)
-    return AttackPath(candidate[0], candidate[1], reachable)
+    return AttackPath(structural[0], structural[1], False)
+
+
+def graph_exposure(graph: AttackGraph, controls: dict[str, bool]) -> dict[str, object]:
+    """Describe which nodes and edges are open, blocked, on a route or decoys.
+
+    The result is derived only from the graph and the current control state, so a
+    visualisation can reflect backend state without inventing any facts.
+    """
+
+    blocked = _blocked_edge_ids(graph, controls)
+
+    def reach(edges, start, reverse=False):
+        adjacency: dict[str, list[str]] = {}
+        for edge in edges:
+            source, target = (edge.target_node_id, edge.source_node_id) if reverse else (edge.source_node_id, edge.target_node_id)
+            adjacency.setdefault(source, []).append(target)
+        seen, stack = {start}, [start]
+        while stack:
+            for neighbour in adjacency.get(stack.pop(), []):
+                if neighbour not in seen:
+                    seen.add(neighbour)
+                    stack.append(neighbour)
+        return seen
+
+    open_edges = [edge for edge in graph.edges if edge.edge_id not in blocked]
+    reachable_now = reach(open_edges, graph.entry_node_id)
+    from_entry = reach(graph.edges, graph.entry_node_id)
+    to_target = reach(graph.edges, graph.target_node_id, reverse=True)
+    on_route = from_entry & to_target
+    return {
+        "target_reachable": graph.target_node_id in reachable_now,
+        "reachable_node_ids": [node.node_id for node in graph.nodes if node.node_id in reachable_now],
+        "route_node_ids": [node.node_id for node in graph.nodes if node.node_id in on_route],
+        "decoy_node_ids": [node.node_id for node in graph.nodes if node.node_id not in on_route],
+        "blocked_edge_ids": [edge.edge_id for edge in graph.edges if edge.edge_id in blocked],
+        "open_edge_ids": [edge.edge_id for edge in open_edges],
+    }
 
 
 class RedAgent:

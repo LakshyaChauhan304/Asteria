@@ -32,7 +32,8 @@ from student2_detection_to_investigator import (
     DetectionInvestigationResult,
     Student2DetectionToInvestigator,
 )
-from student2_red_agent import RedAgent, RedAgentFinding, scenario_definition
+from student2_red_agent import RedAgent, RedAgentFinding, graph_exposure, scenario_definition
+from student2_scenario_selector import ScenarioSuggestion, suggest_scenario
 from student2_xgboost_runtime import XGBoostRuntime
 
 
@@ -71,6 +72,8 @@ class DemoOrchestrator:
         self.approval: ApprovalEvent | None = None
         self.audit: RemediationAuditEvent | None = None
         self.verification: VerificationResult | None = None
+        self.suggestion: ScenarioSuggestion | None = None
+        self.decision_history: list[ApprovalEvent] = []
 
     def initialize(
         self, *, training_rows: int = 20_000, event_count: int = 20, resource_loader=None
@@ -116,6 +119,8 @@ class DemoOrchestrator:
         case._results = self._results
         case.state = WorkflowState.DETECTED
         case.start_investigation(event_id)
+        flow = next((row for row in case._bundle.telemetry_rows if row["event_id"] == event_id), None) if case._bundle else None
+        case.suggestion = suggest_scenario(flow) if flow else None
         return case
 
     def run_red_simulation(self, scenario_id: str) -> RedAgentFinding:
@@ -136,26 +141,31 @@ class DemoOrchestrator:
         self.state = WorkflowState.BLUE_RECOMMENDED
         return self.recommendations
 
-    def approve_recommendation(self, operator_identity: str, recommendation_id: str | None = None) -> ApprovalEvent:
-        self._require(WorkflowState.BLUE_RECOMMENDED)
-        recommendation = self._recommendation(recommendation_id)
-        self.approval = ApprovalEvent(
-            f"approval:{recommendation.recommendation_id}", recommendation.recommendation_id,
-            recommendation.investigation_id, operator_identity, ApprovalDecision.APPROVED,
-            datetime.now(timezone.utc).isoformat(),
-        )
-        self.state = WorkflowState.AWAITING_APPROVAL
-        return self.approval
+    def record_decision(
+        self, operator_identity: str, decision: ApprovalDecision, note: str = "",
+        recommendation_id: str | None = None,
+    ) -> ApprovalEvent:
+        """Record an operator decision. Only an approval can lead to remediation."""
 
-    def decline_recommendation(self, operator_identity: str, recommendation_id: str | None = None) -> ApprovalEvent:
         self._require(WorkflowState.BLUE_RECOMMENDED)
         recommendation = self._recommendation(recommendation_id)
-        self.approval = ApprovalEvent(
-            f"approval:{recommendation.recommendation_id}", recommendation.recommendation_id,
-            recommendation.investigation_id, operator_identity, ApprovalDecision.DECLINED,
-            datetime.now(timezone.utc).isoformat(),
+        event = ApprovalEvent(
+            f"approval:{recommendation.recommendation_id}:{len(self.decision_history) + 1}",
+            recommendation.recommendation_id, recommendation.investigation_id,
+            operator_identity, decision, datetime.now(timezone.utc).isoformat(), note=note,
         )
-        return self.approval
+        self.decision_history.append(event)
+        if decision in (ApprovalDecision.APPROVED, ApprovalDecision.DECLINED):
+            self.approval = event
+        if decision is ApprovalDecision.APPROVED:
+            self.state = WorkflowState.AWAITING_APPROVAL
+        return event
+
+    def approve_recommendation(self, operator_identity: str, recommendation_id: str | None = None, note: str = "") -> ApprovalEvent:
+        return self.record_decision(operator_identity, ApprovalDecision.APPROVED, note, recommendation_id)
+
+    def decline_recommendation(self, operator_identity: str, recommendation_id: str | None = None, note: str = "") -> ApprovalEvent:
+        return self.record_decision(operator_identity, ApprovalDecision.DECLINED, note, recommendation_id)
 
     def apply_simulated_remediation(self) -> RemediationAuditEvent:
         self._require(WorkflowState.AWAITING_APPROVAL)
@@ -207,7 +217,8 @@ class DemoOrchestrator:
                 "candidate_path": self.finding.to_dict()["candidate_path"],
                 "control_id": scenario.control_id,
             }
-        report = {"workflow_state": self.state.value, "incident_status": self.incident_status.value, "environment": {"environment_id": self.environment.environment_id, "initial_state": self.environment.initial_state, "current_state": self.environment.current_state, "audit_history": [item.to_dict() for item in self.environment.audit_history]}, "telemetry": [] if self._bundle is None else list(self._bundle.telemetry_rows), "detection_cases": cases, "selected_event_id": None if self.selected is None else self.selected.detection.event_id, "investigation": None if self.selected is None else self.selected.investigation.to_dict(), "red_finding": None if self.finding is None else self.finding.to_dict(), "attack_graph": graph, "recommendations": [item.to_dict() for item in self.recommendations], "approval": None if self.approval is None else self.approval.to_dict(), "remediation_audit": None if self.audit is None else self.audit.to_dict(), "verification": None if self.verification is None else self.verification.to_dict()}
+        exposure = {} if self.finding is None else graph_exposure(scenario_definition(self.finding.scenario_id).graph, self.environment.current_state)
+        report = {"workflow_state": self.state.value, "incident_status": self.incident_status.value, "environment": {"environment_id": self.environment.environment_id, "initial_state": self.environment.initial_state, "current_state": self.environment.current_state, "audit_history": [item.to_dict() for item in self.environment.audit_history]}, "telemetry": [] if self._bundle is None else list(self._bundle.telemetry_rows), "detection_cases": cases, "selected_event_id": None if self.selected is None else self.selected.detection.event_id, "investigation": None if self.selected is None else self.selected.investigation.to_dict(), "red_finding": None if self.finding is None else self.finding.to_dict(), "attack_graph": graph, "recommendations": [item.to_dict() for item in self.recommendations], "approval": None if self.approval is None else self.approval.to_dict(), "remediation_audit": None if self.audit is None else self.audit.to_dict(), "verification": None if self.verification is None else self.verification.to_dict(), "decision_history": [item.to_dict() for item in self.decision_history], "scenario_suggestion": None if self.suggestion is None else self.suggestion.to_dict(), "graph_exposure": exposure}
         json.dumps(report)
         return report
 
