@@ -1,7 +1,7 @@
 # Streamlit Community Cloud deployment dependencies for the Asteria demo.
 scikit-learn==1.9.1
-xgboost>=2.1,<4
-numpy>=1.26,<3
-pandas>=2.2,<4
-joblib>=1.4,<2
-streamlit>=1.40,<2
+xgboost==3.4.1
+numpy==2.5.5
+pandas==3.1.1
+joblib==1.6.0
+streamlit==1.67.0
