@@ -72,11 +72,16 @@ class DemoOrchestrator:
         self.audit: RemediationAuditEvent | None = None
         self.verification: VerificationResult | None = None
 
-    def initialize(self, *, training_rows: int = 20_000, event_count: int = 20) -> None:
+    def initialize(
+        self, *, training_rows: int = 20_000, event_count: int = 20, resource_loader=None
+    ) -> None:
         self._require(WorkflowState.CREATED)
-        bundle = load_demo_data(repository_root=self.repository_root, training_rows=training_rows, event_count=event_count)
-        baseline = initialize_baseline_engine(bundle)
-        runtime = XGBoostRuntime.load(repository_root=self.repository_root)
+        if resource_loader is None:
+            bundle = load_demo_data(repository_root=self.repository_root, training_rows=training_rows, event_count=event_count)
+            baseline = initialize_baseline_engine(bundle)
+            runtime = XGBoostRuntime.load(repository_root=self.repository_root)
+        else:
+            bundle, baseline, runtime = resource_loader(self.repository_root, training_rows, event_count)
         contexts = tuple(TrustedObservationContext("demo-investigator", "demo-security-service", f"events/{event_id}") for event_id in bundle.event_ids)
         rules = tuple(CapabilityRule(context.agent_id, context.identity, READ_ONLY_INVESTIGATION_TOOL, CapabilityAction.READ, context.resource) for context in contexts)
         self._adapter = Student2DetectionToInvestigator(Student2DetectionFacade(baseline.engine, runtime), Investigator(CapabilityPolicy(rules)))

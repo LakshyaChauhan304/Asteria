@@ -8,8 +8,10 @@ from pathlib import Path
 
 import streamlit as st
 
+from student2_demo_data import initialize_baseline_engine, load_demo_data
 from student2_demo_orchestrator import DemoOrchestrator, WorkflowState
 from student2_demo_qa import answer
+from student2_xgboost_runtime import XGBoostRuntime
 
 ROOT = Path(__file__).resolve().parent
 VIEWS = (
@@ -23,6 +25,22 @@ STEPS = {
     WorkflowState.AWAITING_APPROVAL: ("Apply approved sandbox control", "apply"),
     WorkflowState.REMEDIATION_IN_PROGRESS: ("Run independent verifier", "verify"),
 }
+
+
+@st.cache_resource(show_spinner="Loading demo models and sample data...")
+def load_demo_resources(repository_root: Path, training_rows: int, event_count: int):
+    bundle = load_demo_data(
+        repository_root=repository_root,
+        training_rows=training_rows,
+        event_count=event_count,
+    )
+    baseline = initialize_baseline_engine(bundle)
+    runtime = XGBoostRuntime.load(repository_root=repository_root)
+    return bundle, baseline, runtime
+
+
+def initialize_demo(batch: DemoOrchestrator) -> None:
+    batch.initialize(resource_loader=load_demo_resources)
 
 
 def perform(operation, *args, destination=None):
@@ -50,7 +68,7 @@ def home(batch):
     if batch.state is WorkflowState.CREATED:
         st.button(
             "Initialize Models", key="initialize",
-            on_click=perform, args=(batch.initialize,), kwargs={"destination": "Detection"},
+            on_click=perform, args=(initialize_demo, batch), kwargs={"destination": "Detection"},
             type="primary",
         )
     else:
@@ -240,6 +258,11 @@ def main():
     with st.container():
         st.html('<div data-asteria-brand><span aria-hidden="true">✦</span>Asteria</div>')
         view = st.radio("Console navigation", VIEWS, horizontal=True, label_visibility="collapsed", key="demo_view")
+
+    st.warning(
+        "Demo - isolated simulation. Public/synthetic data only. "
+        "State is per session and not durable."
+    )
 
     if "demo_batch" not in st.session_state:
         st.session_state.demo_batch = DemoOrchestrator(ROOT)
