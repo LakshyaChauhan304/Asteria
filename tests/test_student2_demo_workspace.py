@@ -54,21 +54,18 @@ class DemoWorkspaceTests(unittest.TestCase):
         self.assertEqual(app.dataframe[1].value.iloc[0]["event_id"], first)
         self.assertEqual(len(app.dataframe[2].value), 3)
 
-        app.radio(key="case_stage").set_value("Red Simulation").run()
-        press("red")
-        self.assertTrue(any("Public API" in item.proto.body for item in app.get("html")))
-        app.radio(key="case_stage").set_value("Blue Response").run()
-        press("blue")
+        press("run_red_simulation")
+        self.assertEqual(app.session_state.demo_cases[first].state.value, "red_simulated")
+        press("generate_blue_recommendation")
         self.assertTrue(any("Restrict public ingress" in h.value for h in app.subheader))
-        app.radio(key="case_stage").set_value("Verification").run()
-        self.assertFalse(app.button)
-        app.radio(key="case_stage").set_value("Blue Response").run()
-        press("approve")
-        app.radio(key="case_stage").set_value("Verification").run()
-        press("apply")
-        press("verify")
-        self.assertEqual([metric.value for metric in app.metric], ["Reachable", "Blocked"])
-        self.assertTrue(app.dataframe[-1].value["passed"].all())
+        press("approval_approve")
+        self.assertFalse(app.button(key="apply_control").disabled)
+        press("apply_control")
+        press("run_verifier")
+        self.assertEqual(
+            app.session_state.demo_cases[first].export_audit_report()["verification"]["outcome"],
+            "blocked",
+        )
 
         visit("Command Center")
         metrics = {metric.label: metric.value for metric in app.metric}
@@ -76,8 +73,7 @@ class DemoWorkspaceTests(unittest.TestCase):
         self.assertEqual(metrics["Cases verified"], "1")
 
         visit("Audit & Reports")
-        self.assertEqual(len(app.get("download_button")), 2)
-        self.assertTrue(any(first in caption.value for caption in app.caption))
+        self.assertEqual(len(app.get("download_button")), 3)
 
         visit("Cases")
         select_case(1)
@@ -87,11 +83,12 @@ class DemoWorkspaceTests(unittest.TestCase):
         self.assertEqual(metrics["Cases opened"], "2")
         self.assertEqual(metrics["Cases verified"], "1")
         visit("Cases")
-        app.radio(key="case_stage").set_value("Verification").run()
-        self.assertFalse(app.metric)
+        self.assertTrue(app.button(key="apply_control").disabled)
         select_case(0)
-        app.radio(key="case_stage").set_value("Verification").run()
-        self.assertEqual([metric.value for metric in app.metric], ["Reachable", "Blocked"])
+        self.assertEqual(
+            app.session_state.demo_cases[first].export_audit_report()["verification"]["outcome"],
+            "blocked",
+        )
 
 
 if __name__ == "__main__":
